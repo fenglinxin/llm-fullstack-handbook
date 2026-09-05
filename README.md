@@ -1,13 +1,14 @@
 # LLM 全栈工程 · LLM 工业级全栈工程落地手册
 
 > 零基础能看懂、工程师能直接复用、企业项目可落地的 LLM 工业级全栈工程连载手册。
-> 46 章单篇独立可读，合在一起是一本完整的 LLM 工程落地手册。
+> 第 00 章架构通识 + 主线 46 章，共 47 篇；单篇独立可读，合起来是一本完整手册。
 
 ## 内容结构
 
-| 阶段 | 章节 | 覆盖内容 |
+| 范围 | 篇目 | 覆盖内容 |
 |---|---|---|
-| 第 0 阶段 · 开篇引路 | 01–3 | 全栈地图、最小闭环与预训练原理 |
+| 第 00 章 · 架构通识 | 00–00 | RNN/LSTM/GRU、Transformer、Mamba/SSM、MoE、稀疏注意力、世界模型、音频/视觉/多模态架构与横向对比 |
+| 第 0 阶段 · 开篇引路 | 01–03 | 全栈地图、2 小时最小闭环、预训练原理 |
 | 第 1 阶段 · 预训练工程·数据核心层 | 04–13 | 数据管道、清洗、过滤、去重、脱敏、质量打分、领域数据、增量预训练、超参与训练稳定性 |
 | 第 2 阶段 · 微调与对齐体系 | 14–26 | SFT、数据标注、模板、调参、拟合与遗忘、评估、多轮、蒸馏、RM、PPO、RLAIF、冷启动 |
 | 第 3 阶段 · 基础部署与推理优化 | 27–34 | 框架对比、vLLM、SGLang、TensorRT-LLM、量化、剪枝、KV Cache、流式与高并发 |
@@ -19,10 +20,10 @@
 ```text
 llm-fullstack-handbook/
 ├── README.md
-├── md/                  # 46 篇 Markdown 源稿（与公众号一致）
+├── md/                  # 47 篇 Markdown 源稿（第 00 章 + 主线 46 章）
 ├── docs/                # GitHub Pages 站点（发布根目录）
-│   ├── index.html       # 首页：六阶段章节总目录
-│   ├── chapters/        # ch01.html … ch46.html
+│   ├── index.html       # 首页：阶段章节总目录
+│   ├── chapters/        # ch00.html … ch46.html
 │   ├── assets/style.css
 │   └── .nojekyll
 └── scripts/
@@ -45,12 +46,15 @@ python3 scripts/build_site.py
 
 ## 发布到 GitHub Pages
 
-1. 在本仓库 Settings → Pages → Build and deployment → Source 选择「Deploy from a branch」；
-2. Branch 选主分支，目录选 `/docs`；
-3. 站点地址为 `https://<用户名>.github.io/<仓库名>/`。
+1. 仓库 Settings → Pages → Build and deployment → Source 选择「Deploy from a branch」；
+2. Branch 选 `main`，目录选 `/docs`；
+3. 站点地址：https://fenglinxin.github.io/llm-fullstack-handbook/
 
-## 章节索引（46 章）
+## 章节索引（47 篇）
 
+
+- 第 00 章 · 架构通识
+  - 【LLM全栈工程·第00章】模型结构核心原理层：主流架构一张图讲透（RNN→Transformer→Mamba→MoE→多模态）
 
 - 第 0 阶段 · 开篇引路
   - 【LLM全栈工程·第01章】一条大模型生产线全程发生了什么？0 基础也能看懂的 LLM 全栈地图与学习路线

@@ -13,11 +13,11 @@ OUT_DIR = ROOT / "docs"
 CH_DIR = OUT_DIR / "chapters"
 
 SERIES = "LLM 全栈工程"
-SUBTITLE = "LLM 工业级全栈工程落地手册 · 46 章"
+SUBTITLE = "LLM 工业级全栈工程落地手册 · 第 00 章 + 主线 46 章"
 TOTAL = 46
 
 STAGES = [
-    (1, 3, "第 0 阶段 · 开篇引路", "全栈地图、2 小时最小闭环、预训练原理"),
+    (0, 3, "架构通识与第 0 阶段 · 开篇引路", "第 00 章架构通识 + 全栈地图、最小闭环、预训练原理"),
     (4, 13, "第 1 阶段 · 预训练工程·数据核心层", "数据管道、清洗、过滤、去重、脱敏、质量打分、领域数据、增量预训练、超参与稳定性"),
     (14, 26, "第 2 阶段 · 微调与对齐体系", "SFT、数据标注、模板、调参、拟合与遗忘、评估、多轮、蒸馏、RM、PPO、RLAIF、冷启动"),
     (27, 34, "第 3 阶段 · 基础部署与推理优化", "框架对比、vLLM、SGLang、TensorRT-LLM、量化、剪枝、KV Cache、流式与高并发"),
@@ -44,7 +44,7 @@ def build_page(title, body, toc, prev_html, next_html, rel):
 </head>
 <body>
 <header class="site-header"><div class="wrap">
-<a class="brand" href="{rel}index.html">LLM 全栈工程<small>LLM 工业级全栈工程落地手册 · 46 章</small></a>
+<a class="brand" href="{rel}index.html">LLM 全栈工程<small>LLM 工业级全栈工程落地手册 · 第 00 章 + 主线 46 章</small></a>
 <nav><a href="{rel}index.html">目录</a><a href="https://github.com/fenglinxin/llm-fullstack-handbook">GitHub 仓库</a></nav>
 </div></header>
 <main class="wrap">
@@ -55,7 +55,7 @@ def build_page(title, body, toc, prev_html, next_html, rel):
 </article>
 <nav class="prevnext">{prev}{next}</nav>
 </main>
-<footer class="wrap"><p>LLM 全栈工程 · Voice前沿 出品 · 46 章连载 · 收藏即手册</p></footer>
+<footer class="wrap"><p>LLM 全栈工程 · Voice前沿 出品 · 47 篇 · 收藏即手册</p></footer>
 </body>
 </html>
 """.format(
@@ -123,14 +123,14 @@ def main():
 </head>
 <body>
 <header class="site-header"><div class="wrap">
-<a class="brand" href="index.html">LLM 全栈工程<small>LLM 工业级全栈工程落地手册 · 46 章</small></a>
+<a class="brand" href="index.html">LLM 全栈工程<small>LLM 工业级全栈工程落地手册 · 第 00 章 + 主线 46 章</small></a>
 <nav><a href="index.html">目录</a><a href="https://github.com/fenglinxin/llm-fullstack-handbook">GitHub 仓库</a></nav>
 </div></header>
 <div class="hero"><div class="wrap">
 <h1>LLM 全栈工程</h1>
 <p>从 0 到 1 打通 LLM 预训练 · 微调对齐 · 部署推理 · 编译器极致优化：原理白话 · 选型对比 · 分步实操 · 避坑手册</p>
 <div class="badges">
-<span class="badge">46 章连载</span><span class="badge">数据核心</span><span class="badge">微调对齐</span>
+<span class="badge">47 篇</span><span class="badge">数据核心</span><span class="badge">微调对齐</span>
 <span class="badge">部署推理</span><span class="badge">编译器优化</span><span class="badge">全栈落地</span>
 </div>
 </div></div>
