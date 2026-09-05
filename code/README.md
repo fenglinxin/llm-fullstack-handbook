@@ -14,6 +14,7 @@
 | 04_sparse_attention | FlashAttention 调用 + 窗口注意力 | flash_attn_demo.py / window_attention.py | torch（flash-attn 可选） |
 | 05_audio_vision_multimodal | 音频特征 / 视觉推理 / 多模态融合 | audio_feature_demo.py / vision_inference_demo.py / multimodal_fusion_demo.py | torch / torchaudio / torchvision（可降级） |
 | 06_world_model | 简易时序推演（世界模型最小版） | world_model_demo.py | torch |
+| minimind_style | MiniMind 式微型 LLM：分词+预训练+生成 | pretrain.py / generate.py | torch |
 
 ## 环境依赖（最小公共集）
 
