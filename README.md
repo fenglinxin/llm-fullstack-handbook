@@ -21,6 +21,7 @@
 llm-fullstack-handbook/
 ├── README.md
 ├── md/                  # 47 篇 Markdown 源稿（第 00 章 + 主线 46 章）
+├── code/                # 第 00 章配套：模型结构可运行代码（RNN/Transformer/Mamba/MoE/稀疏注意力/多模态/世界模型）
 ├── docs/                # GitHub Pages 站点（发布根目录）
 │   ├── index.html       # 首页：阶段章节总目录
 │   ├── chapters/        # ch00.html … ch46.html
@@ -29,6 +30,10 @@ llm-fullstack-handbook/
 └── scripts/
     └── build_site.py    # 由 md/ 重新生成 docs/ 的构建脚本
 ```
+
+## 模型结构落地代码
+
+第 00 章《模型结构核心原理层》的配套可运行代码在 `code/` 目录，每类架构一个子目录，含环境依赖、逐行注释、避坑、输出解读与进阶 Prompt，详见 `code/README.md`。
 
 ## 本地预览
 
