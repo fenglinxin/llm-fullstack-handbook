@@ -83,3 +83,26 @@
 - 模板：CoT（<think>）与工具两轮闭环（<tool_call>→执行→<tool_result>→<answer>）
   纯标准库演示通过；check 模式实测字符级 tokenizer 对 <>{} 模板字符覆盖率仅 26-35%，
   佐证模板工程需 BPE/ByteLevel 分词。
+## 十、MiniMind 系列变体补充（V / O / dLM / Linear）
+
+> 参考 MiniMind 同名变体的定位做教学原创实现，不改动已发布文档。
+
+| 变体 | 教学实现 | 实测结果 |
+|---|---|---|
+| MiniMind-V 视觉 | vision_model.py + train_v.py：12x12 图案 -> 36 图像 token + 文本解码器 | val_acc 100%（按图像实例划分测试，随机 12.5%） |
+| MiniMind-O Omni | omni_model.py + train_o.py：AudioTower + VisionTower 共享文本解码器 | audio_acc 100%、vision_acc 87.5% |
+| MiniMind-dLM 扩散 | dlm_model.py + train_dlm.py：双向 Transformer + MASK 扩散 + span 涂黑 | 训练窗口还原 98.7%；2 字完形精确（问题/精度） |
+| MiniMind-Linear 线性 | linear_model.py + train_linear.py：elu+1 核累积 KV 线性注意力 | 同 400 步 eval CE 0.0196(softmax) vs 0.0255(linear) |
+
+- [x] P0–P3 主线（前几轮完成）
+- [x] MiniMind-V 视觉教学版（本轮）
+- [x] MiniMind-O 全模态教学版（本轮）
+- [x] MiniMind-dLM 扩散语言模型教学版（本轮）
+- [x] MiniMind-Linear 线性注意力教学版（本轮）
+
+关键教训：
+1. 视觉模型推理时图像必须带 batch 维（[1,12,12] 会被当成“通道”错位读取）；
+2. 扩散 LM 若只用独立撒点涂黑，模型没见过连续挖空，完形填空会失效——
+   需要 span 涂黑混合（span_prob）；
+3. 扩散 LM 的“生成长度”固定，自由续写不是它的主场，双向完形才是；
+4. 线性注意力小语料略逊 softmax 属预期，价值在长序列/流式场景。

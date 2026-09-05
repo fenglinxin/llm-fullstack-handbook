@@ -1,7 +1,8 @@
 # MiniMind 式微型 LLM（minimind_style）
 
 > 参考 https://github.com/jingyaogong/minimind 的定位：大道至简，纯 PyTorch 从 0 训练微型 LLM。
-> 本目录是教学最小闭环，不依赖 transformers/trl/peft。P0（预训练）+ P1（SFT）+ P2（LoRA/DPO）+ P3（MoE/GRPO/工具模板）均已跑通。
+> 本目录是教学最小闭环，不依赖 transformers/trl/peft。P0–P3 主线链路已跑通，
+> 并补充了 MiniMind 系列变体教学版：**MiniMind-V（视觉）/ MiniMind-O（Omni 音画）/ MiniMind-dLM（扩散语言模型）/ MiniMind-Linear（线性注意力）**。
 
 ## 快速开始
 
@@ -16,6 +17,11 @@ python train_dpo.py                # P2b 偏好对齐（基座 = out/sft.pt）
 python train_moe.py --steps 400   # P3a MoE 变体预训练（Dense vs MoE 对照）
 python train_grpo.py --steps 80   # P3b 规则奖励 GRPO（组相对优势）
 python tool_template_demo.py      # P3c 工具调用/思考模板演示（无需训练）
+# ---- MiniMind 系列变体（本轮补充） ----
+python data/make_vision_data.py && python train_v.py    # MiniMind-V：看图问答
+python data/make_omni_data.py && python train_o.py      # MiniMind-O：音频+图像问答
+python train_dlm.py --steps 3000 --span_prob 0.9        # MiniMind-dLM：完形填空式还原
+python train_linear.py                                  # MiniMind-Linear：线性注意力
 ~~~
 
 ## 文件说明
@@ -37,6 +43,14 @@ python tool_template_demo.py      # P3c 工具调用/思考模板演示（无需
 | train_grpo.py | 极简 GRPO：组内采样 K 个回答 + 规则奖励 + 组相对 advantage |
 | tool_template_demo.py | CoT/工具调用/工具结果模板与两轮闭环演示（标准库即可跑） |
 | generate.py | 加载 checkpoint 做温度/top-k 采样生成 |
+| vision_model.py | MiniMind-V：VisionTower（patch 化+位置编码）+ 8 种图案渲染 + 看图问答 |
+| train_v.py | MiniMind-V 训练：训练/测试按图像实例划分，报 val_acc |
+| omni_model.py | MiniMind-O：AudioTower（帧 RMS+频率幅度）+ VisionTower + 共享文本解码器 |
+| train_o.py | MiniMind-O 训练：音调+看图双任务，分模态报准确率 |
+| dlm_model.py | MiniMind-dLM：双向 Transformer + MASK 扩散（corrupt/generate/infill） |
+| train_dlm.py | MiniMind-dLM 训练：span 涂黑 + 完形填空演示 |
+| linear_model.py | MiniMind-Linear：elu+1 核线性注意力（累积 KV 状态） |
+| train_linear.py | MiniMind-Linear 训练：与 softmax 版同配置对照 |
 
 ## 预期输出（本机实测）
 
@@ -60,6 +74,15 @@ python tool_template_demo.py      # P3c 工具调用/思考模板演示（无需
   奖励差异可产生学习信号；多数步因“全组 reward=1.0”跳过——背题过拟合的体现；
 - P3c 模板演示：cot/tool/check 三种模式实测通过，字符级分词对 <>{} 模板字符
   覆盖率仅 26-35%，印证模板工程需要 BPE 分词；
+- V 看图问答：训练/测试按图像实例（噪声点位置）划分，val_acc = 100%
+  （8 类随机仅 12.5%），证明视觉通路真的把图案传给了文本解码器；
+- O 音画问答：audio_acc = 100%（3 类音调）、vision_acc = 87.5%，
+  同一个文本解码器同时吃到音频与图像两种模态；
+- dLM 扩散语言模型：训练窗口 span 涂黑还原率 98.7%，左右上下文可见时
+  2 字完形精确还原（如 [问题]/[精度]）；3 字以上跨度仍会出错，
+  是微型模型容量/调度敏感性的真实体现；
+- Linear 线性注意力：同 400 步同种子下 eval CE 0.0196(softmax) vs 0.0255(linear)，
+  生成都能复现语料句子——线性注意力小语料上略有损失但机制完整；
 - 长回复随后会混乱/串词——6 条样本的玩具模型只能做到“背题级”，教学目的已达成；
 - 想看到更自然文本：换更大语料并加 early stop / 评测集（主线 04-13 章方法）。
 
@@ -75,8 +98,9 @@ python tool_template_demo.py      # P3c 工具调用/思考模板演示（无需
 
 ## 下一步
 
-- P0–P3 已全部落地。可选扩展：把 LoRA/DPO/GRPO 串成一条完整训练链路对比、
-  给 MoE 加 z-loss、用真实 CoT/工具数据重训 SFT（见各文件「进阶改造 Prompt」）。
+- P0–P3 与 MiniMind 系列变体（V/O/dLM/Linear）均已落地并真实运行验证。
+- 可选扩展：见各文件文末「进阶改造 Prompt」（真实图片/音频、统一模态 token 序列、
+  扩散长度调度、线性注意力流式解码等）。
 
 ## 进阶改造 Prompt
 

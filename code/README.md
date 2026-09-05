@@ -14,7 +14,7 @@
 | 04_sparse_attention | FlashAttention 调用 + 窗口注意力 | flash_attn_demo.py / window_attention.py | torch（flash-attn 可选） |
 | 05_audio_vision_multimodal | 音频特征 / 视觉推理 / 多模态融合 | audio_feature_demo.py / vision_inference_demo.py / multimodal_fusion_demo.py | torch / torchaudio / torchvision（可降级） |
 | 06_world_model | 简易时序推演（世界模型最小版） | world_model_demo.py | torch |
-| minimind_style | MiniMind 式微型 LLM：P0–P3 全链路（预训练/SFT/LoRA/DPO/MoE/GRPO/工具模板） | pretrain.py / train_sft.py / train_lora.py / train_dpo.py / train_moe.py / train_grpo.py / tool_template_demo.py | torch |
+| minimind_style | MiniMind 式微型 LLM：P0–P3 全链路 + 变体 V/O/dLM/Linear | pretrain.py / train_sft.py / train_lora.py / train_dpo.py / train_moe.py / train_grpo.py / tool_template_demo.py / train_v.py / train_o.py / train_dlm.py / train_linear.py | torch |
 
 ## 环境依赖（最小公共集）
 
@@ -73,6 +73,12 @@ pip install torchaudio torchvision
 5. MoE：Router 打分 + Top-k 专家，aux loss 防路由坍塌；小模型+小语料下 MoE 采样质量不如 Dense，稀疏收益在大规模才显现。
 6. GRPO：组内采样 + 规则奖励 + 组相对 advantage；过拟合模型会导致全组 reward 相同、无学习信号，需要更难的任务或更小温度。
 7. 工具/思考模板：先有模板工程再有训练数据；字符级分词覆盖不了 <>{} 等模板字符，真实项目用 BPE。
+
+### MiniMind 系列变体教学版（V / O / dLM / Linear）
+1. MiniMind-V：图像 patch 化+位置编码变成图像 token，与文本拼进同一个 decoder；推理时图像必须带 batch 维。实测未见图像实例 val_acc 100%（随机 12.5%）。
+2. MiniMind-O：AudioTower（帧 RMS+频率幅度）+ VisionTower 共享文本解码器；实测音频 100%、视觉 87.5%。
+3. MiniMind-dLM：双向 Transformer + MASK 扩散；只撒点涂黑学不会连续挖空，需 span 涂黑混合；完形填空（左右上下文）是其主场，自由续写不是。
+4. MiniMind-Linear：elu+1 核线性注意力（累积 KV 状态，O(n) 复杂度）；同 400 步 eval CE 0.0196(softmax) vs 0.0255(linear)，小语料略逊属预期。
 
 ## 使用流程
 
