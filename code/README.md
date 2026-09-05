@@ -14,7 +14,7 @@
 | 04_sparse_attention | FlashAttention 调用 + 窗口注意力 | flash_attn_demo.py / window_attention.py | torch（flash-attn 可选） |
 | 05_audio_vision_multimodal | 音频特征 / 视觉推理 / 多模态融合 | audio_feature_demo.py / vision_inference_demo.py / multimodal_fusion_demo.py | torch / torchaudio / torchvision（可降级） |
 | 06_world_model | 简易时序推演（世界模型最小版） | world_model_demo.py | torch |
-| minimind_style | MiniMind 式微型 LLM：分词+预训练+生成 | pretrain.py / generate.py | torch |
+| minimind_style | MiniMind 式微型 LLM：分词+预训练+生成+SFT+LoRA/DPO | pretrain.py / generate.py / train_sft.py / train_lora.py / train_dpo.py | torch |
 
 ## 环境依赖（最小公共集）
 
@@ -64,6 +64,12 @@ pip install torchaudio torchvision
 1. 核心原理：预测未来状态/观测，在隐空间滚动推演，支持规划。
 2. 核心优势：把学习从“下一个 token”扩展到环境动态，具身/驾驶/游戏潜力大。
 3. 核心现状：多处于研究与早期落地，评测要看“预测准不准”而非“生成像不像”。
+
+### MiniMind 式微型 LLM（P0–P2）
+1. 预训练：纯 PyTorch 手写 TinyGPT，loss 标签必须左移一位（next-token），否则模型只会“抄当前字符”导致生成复读。
+2. SFT：指令部分用 mask 屏蔽，只对回答算 response-only loss；LoRA 冻结基座、只训 A/B 两个低秩矩阵，合并时注意 ΔW 转置。
+3. DPO：policy 与冻结的 ref 同起点，用 chosen/rejected 的平均 logp 差做 margin；小样本 + 大 lr 会过优化（KL 漂移），需用小 lr 观察 margin 温和上升。
+4. 数据注意：chosen/rejected 不要互相引用对方答案，避免自相矛盾的偏好；字符级词表小，UNK 字符无学习信号。
 
 ## 使用流程
 

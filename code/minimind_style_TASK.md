@@ -16,8 +16,8 @@
 |---|---|---|
 | P0 | TinyGPT 结构（RMSNorm/RoPE/因果注意力/FFN）+ 字符分词 + 微型预训练 + 文本生成 | 已完成 |
 | P1 | 微型 SFT（指令模板 + 小 QA 数据） | 已完成 |
-| P2 | LoRA/DPO 最小实现 | 规划中 |
-| P3 | MoE 变体、RLHF/GRPO、工具调用/思考模板 | 远期（参考 MiniMind 演进路线） |
+| P2 | LoRA/DPO 最小实现 | 已完成 |
+| P3 | MoE 变体、RLHF/GRPO、工具调用/思考模板 | 下一轮（远期，参考 MiniMind 演进路线） |
 
 ## 三、与主线章节的映射
 
@@ -51,8 +51,9 @@
 - [x] 输出本优化任务书
 - [x] P0：模型/分词/预训练/生成（已跑通：loss ≈5.9 → 0.02，能复现语料句子）
 - [x] P1：SFT（已跑通：loss ≈1.0 → 0.15，格式正确的问句能背出答案开头）
-- [ ] P2：LoRA/DPO（下一轮）
-- [ ] P3：MoE/RLHF 扩展（远期）
+- [x] P2：LoRA/DPO（已跑通：LoRA 冻结基座只训 A/B，可训练 16,384/161,984≈10%，
+      合并模型正常；DPO margin ≈1.45→2.38，小样本+大 lr 会过优化崩坏）
+- [ ] P3：MoE/RLHF 扩展（下一轮）
 
 ## 七、P1 实测记录与教训
 
@@ -60,3 +61,13 @@
   loss 假性归零但生成只会复读；修复后 loss 从 ln(vocab)≈5.9 正常下降。
 - SFT 用字符偏移实现 response-only mask（指令部分 -100 屏蔽），6 条 QA 上
   loss 从约 1.0 降到 0.15；因语料过小，长回复会串词，属教学预期。
+
+## 八、P2 实测记录与教训
+
+- LoRA：apply_lora 就地替换全部 nn.Linear（除 lm_head），基座全冻结；
+  合并 ΔW=A@B 形状为 [in,out]，写回 nn.Linear.weight（[out,in]）必须先转置（已修复）。
+- DPO：policy 与冻结 ref 同起点，chosen/rejected 平均 logp 差做 margin；
+  默认 lr=1e-5 时 margin 温和上升且生成正常；lr=5e-4 时 margin 冲到 8+ 但生成崩坏，
+  是典型的小样本 KL 漂移/过优化，教学上保留为对照。
+- 数据教训：rejected 若引用其他问题的 chosen，会产生自相矛盾的偏好信号，
+  真实偏好数据构造必须避免交叉引用。
