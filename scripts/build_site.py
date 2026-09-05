@@ -45,7 +45,7 @@ def build_page(title, body, toc, prev_html, next_html, rel):
 <body>
 <header class="site-header"><div class="wrap">
 <a class="brand" href="{rel}index.html">LLM 全栈工程<small>LLM 工业级全栈工程落地手册 · 46 章</small></a>
-<nav><a href="{rel}index.html">目录</a><a href="https://github.com/">GitHub 仓库</a></nav>
+<nav><a href="{rel}index.html">目录</a><a href="https://github.com/fenglinxin/llm-fullstack-handbook">GitHub 仓库</a></nav>
 </div></header>
 <main class="wrap">
 <nav class="crumbs"><a href="{rel}index.html">全部章节</a> / {title}</nav>
@@ -124,7 +124,7 @@ def main():
 <body>
 <header class="site-header"><div class="wrap">
 <a class="brand" href="index.html">LLM 全栈工程<small>LLM 工业级全栈工程落地手册 · 46 章</small></a>
-<nav><a href="index.html">目录</a><a href="https://github.com/">GitHub 仓库</a></nav>
+<nav><a href="index.html">目录</a><a href="https://github.com/fenglinxin/llm-fullstack-handbook">GitHub 仓库</a></nav>
 </div></header>
 <div class="hero"><div class="wrap">
 <h1>LLM 全栈工程</h1>
