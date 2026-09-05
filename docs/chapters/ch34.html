@@ -1,0 +1,502 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>【LLM全栈工程·第34章】流式推理封装与高并发服务化：从单实例到生产网关 · LLM 全栈工程</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header"><div class="wrap">
+<a class="brand" href="../index.html">LLM 全栈工程<small>LLM 工业级全栈工程落地手册 · 46 章</small></a>
+<nav><a href="../index.html">目录</a><a href="https://github.com/">GitHub 仓库</a></nav>
+</div></header>
+<main class="wrap">
+<nav class="crumbs"><a href="../index.html">全部章节</a> / 【LLM全栈工程·第34章】流式推理封装与高并发服务化：从单实例到生产网关</nav>
+<details class="toc-box"><summary>本章目录</summary><div class="toc">
+<ul>
+<li><a href="#_1">单篇内容卡（排版本忽略）</a></li>
+<li><a href="#01">01 开篇导语</a></li>
+<li><a href="#02-sse">02 白话原理：SSE 流式与网关的冲突</a><ul>
+<li><a href="#21-sse">2.1 SSE 是什么</a></li>
+<li><a href="#22">2.2 为什么网关会“吞掉”流</a></li>
+<li><a href="#23">2.3 客户端要处理的四件事</a></li>
+</ul>
+</li>
+<li><a href="#03">03 高并发架构与选型</a><ul>
+<li><a href="#31">3.1 分层架构</a></li>
+<li><a href="#32">3.2 路由策略</a></li>
+<li><a href="#33">3.3 限流与队列</a></li>
+<li><a href="#34">3.4 稳定性三板斧</a></li>
+</ul>
+</li>
+<li><a href="#05-1">05 分步实操：流式客户端与高并发演练（约 1 小时）</a><ul>
+<li><a href="#step-1-10">Step 1 流式客户端（10 分钟）</a></li>
+<li><a href="#step-2-10">Step 2 流式压测脚本（10 分钟）</a></li>
+<li><a href="#step-3-nginx-20">Step 3 双实例 + Nginx 网关（20 分钟）</a></li>
+<li><a href="#step-4-10">Step 4 故障演练（10 分钟）</a></li>
+</ul>
+</li>
+<li><a href="#06">06 参数详解：服务化配置速查</a></li>
+<li><a href="#07">07 高频踩坑排查</a></li>
+<li><a href="#08">08 进阶优化：服务化进化方向</a></li>
+<li><a href="#09-top3">09 本章核心总结（TOP3）</a></li>
+<li><a href="#10">10 连载衔接</a></li>
+<li><a href="#11">11 话题标签与系列目录索引</a></li>
+</ul>
+</div>
+</details>
+<article class="article">
+<h1 id="llm34">【LLM全栈工程·第34章】流式推理封装与高并发服务化：从单实例到生产网关</h1>
+<blockquote>
+<p>本篇为「LLM全栈工程」连载第 34 章（Voice前沿）。主标题以上为准；备选标题（供运营选用，不进正文）：① SSE 流式输出为什么会被网关“吃掉”？流式封装实战；② 多实例、限流、负载均衡：LLM 高并发服务化；③ 稳定性三件套：健康检查、队列与优雅退出。</p>
+</blockquote>
+<hr />
+<h2 id="_1">单篇内容卡（排版本忽略）</h2>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>章节定位</td>
+<td>「基础部署与推理优化」第 8 篇：把单机 vLLM 变成可上线的流式高并发服务</td>
+</tr>
+<tr>
+<td>适用场景</td>
+<td>个人学习（流式客户端）；小团队上线对话服务；企业多实例网关</td>
+</tr>
+<tr>
+<td>核心知识点</td>
+<td>SSE 流式协议；网关/负载均衡；限流与队列；稳定性与优雅退出</td>
+</tr>
+<tr>
+<td>技术选型</td>
+<td>直连 vs 网关（Nginx/Ingress）；多实例路由策略</td>
+</tr>
+<tr>
+<td>分步实操</td>
+<td>流式客户端 → 双实例 + Nginx 网关 → 流式压测 → 故障演练 → 监控基线</td>
+</tr>
+<tr>
+<td>参数详解</td>
+<td>流式超时、proxy_buffering、限流 QPS、队列深度、重试策略</td>
+</tr>
+<tr>
+<td>踩坑排查</td>
+<td>网关缓冲吞流、客户端超时过短、重试造成重复计费、实例热不均</td>
+</tr>
+<tr>
+<td>进阶优化</td>
+<td>K8s HPA、PD 分离路由、小模型兜底、成本路由</td>
+</tr>
+<tr>
+<td>本章 TOP3</td>
+<td>见文末</td>
+</tr>
+<tr>
+<td>下章预告</td>
+<td>第 35 章：推理编译器核心原理</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="01">01 开篇导语</h2>
+<p>模型服务单实例跑通了，但“能用”和“能上线”之间还有一整层工程：<strong>流式体验、多实例、网关、限流、稳定性</strong>。</p>
+<p>常见事故现场：</p>
+<ul>
+<li>前端等了 5 秒一个字没出——Nginx 把 SSE 缓冲了；</li>
+<li>客户端 60 秒超时，但 TTFT 要 80 秒——排队请求被掐死；</li>
+<li>网关超时自动重试——同一个贵请求被算了两遍钱；</li>
+<li>两个实例一个忙死一个闲死——负载均衡策略不对。</li>
+</ul>
+<p>本章把服务化拆成四件事：流式封装、网关路由、限流队列、稳定性演练，每件都给可复现的配置与脚本。</p>
+<blockquote>
+<p>一句话记住本章：<strong>LLM 服务化 = 流式（SSE 不能被缓冲）+ 路由（按负载/缓存亲和）+ 限流（队列有界）+ 演练（挂了能恢复）。</strong></p>
+</blockquote>
+<hr />
+<h2 id="02-sse">02 白话原理：SSE 流式与网关的冲突</h2>
+<h3 id="21-sse">2.1 SSE 是什么</h3>
+<p>SSE（Server-Sent Events）是 HTTP 上的流式协议：服务端持续向客户端推送数据块，直到 [DONE]。OpenAI 兼容接口的 stream=true 就是 SSE。</p>
+<h3 id="22">2.2 为什么网关会“吞掉”流</h3>
+<p>Nginx 等反向代理默认会<strong>缓冲后端响应</strong>，攒够一定量才发给客户端——流式输出的“逐字效果”没了，TTFT 也变成“等整段”。</p>
+<p>解法：对 LLM 流式路由必须关缓冲：</p>
+<pre><code class="language-nginx">proxy_buffering off;
+proxy_cache off;
+proxy_read_timeout 300s;   # 覆盖“首字慢+长生成”场景
+proxy_http_version 1.1;
+</code></pre>
+<h3 id="23">2.3 客户端要处理的四件事</h3>
+<ol>
+<li>按 chunk 解析 delta，而不是等完整响应；</li>
+<li>区分“网络中断”与“正常结束”（[DONE]）；</li>
+<li>超时按“首字超时”与“总超时”分开设；</li>
+<li>用户取消时主动断开，省后端算力。</li>
+</ol>
+<blockquote>
+<p>记忆锚点：<strong>流式体验 = 服务端分块 + 网关不缓冲 + 客户端逐块渲染 + 超时分级。</strong></p>
+</blockquote>
+<h2 id="03">03 高并发架构与选型</h2>
+<h3 id="31">3.1 分层架构</h3>
+<pre><code class="language-text">客户端/业务层
+   → 网关层（限流、路由、鉴权、重试策略）
+   → 推理实例池（多个 vLLM/SGLang，各自 max-num-seqs）
+   → 监控/告警（指标、日志、trace）
+</code></pre>
+<h3 id="32">3.2 路由策略</h3>
+<table>
+<thead>
+<tr>
+<th>策略</th>
+<th>适合</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>轮询</td>
+<td>通用</td>
+<td>简单，但实例负载可能不均</td>
+</tr>
+<tr>
+<td>最少连接</td>
+<td>长请求多</td>
+<td>按活动连接数路由</td>
+</tr>
+<tr>
+<td>前缀缓存亲和</td>
+<td>system 前缀共享流量</td>
+<td>同一前缀尽量进同一实例，缓存命中率高</td>
+</tr>
+<tr>
+<td>队列感知</td>
+<td>高并发</td>
+<td>路由到队列最短的实例</td>
+</tr>
+</tbody>
+</table>
+<h3 id="33">3.3 限流与队列</h3>
+<ul>
+<li>网关限流：按 API Key/客户端限 QPS 与并发；</li>
+<li>实例队列：vLLM max-num-seqs 之外的请求在网关排队（<strong>队列必须有界</strong>）；</li>
+<li>拒绝策略：超队列返回 429 + Retry-After，而不是无限等待；</li>
+<li>降级：队列满时把请求路由到小模型/备用池（可选）。</li>
+</ul>
+<h3 id="34">3.4 稳定性三板斧</h3>
+<ol>
+<li><strong>健康检查</strong>：/health + 真实推理探针（每 30s 问一个 1-token 请求）；</li>
+<li><strong>优雅退出</strong>：停实例前先摘流量，等存量流式请求结束再杀进程；</li>
+<li><strong>熔断</strong>：实例连续错误超阈值自动摘除，恢复后自动回归。</li>
+</ol>
+<blockquote>
+<p>生产提示：网关层不要做“无限重试”——LLM 请求贵且非幂等；只对“连接类错误”做 1 次重试，超时/业务错误直接返回。</p>
+</blockquote>
+<h2 id="05-1">05 分步实操：流式客户端与高并发演练（约 1 小时）</h2>
+<h3 id="step-1-10">Step 1 流式客户端（10 分钟）</h3>
+<p>保存 scripts/stream_client.py：</p>
+<pre><code class="language-python"># scripts/stream_client.py —— SSE 流式客户端：逐块输出+测 TTFT
+# 用法：python stream_client.py &lt;base_url&gt; &lt;model&gt; [prompt]
+import sys
+import time
+
+from openai import OpenAI
+
+base_url = sys.argv[1] if len(sys.argv) &gt; 1 else &quot;http://localhost:8000/v1&quot;
+model = sys.argv[2] if len(sys.argv) &gt; 2 else &quot;helpdesk&quot;
+prompt = sys.argv[3] if len(sys.argv) &gt; 3 else &quot;打印机连不上怎么办？&quot;
+
+client = OpenAI(base_url=base_url, api_key=&quot;EMPTY&quot;)
+start = time.time()
+first_ts = None
+chars = 0
+try:
+    stream = client.chat.completions.create(
+        model=model,
+        messages=[{&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: prompt}],
+        max_tokens=200,
+        temperature=0.2,
+        stream=True,
+    )
+    for chunk in stream:
+        if first_ts is None:
+            first_ts = time.time()
+            print(&quot;\n[TTFT %.0f ms]\n&quot; % ((first_ts - start) * 1000))
+        delta = chunk.choices[0].delta.content
+        if delta:
+            chars += len(delta)
+            print(delta, end=&quot;&quot;, flush=True)
+    print(&quot;\n[total %.1f s, chars %d]&quot; % (time.time() - start, chars))
+except KeyboardInterrupt:
+    print(&quot;\n[user cancelled]&quot;)
+except Exception as exc:
+    print(&quot;\n[error]&quot;, exc)
+</code></pre>
+<p>运行：</p>
+<pre><code class="language-bash">python scripts/stream_client.py http://localhost:8000/v1 helpdesk
+</code></pre>
+<p><strong>检查</strong>：是否逐块出现（不是整段一次性返回）；Ctrl+C 能否立即断开。</p>
+<h3 id="step-2-10">Step 2 流式压测脚本（10 分钟）</h3>
+<p>保存 scripts/loadgen_stream.py：</p>
+<pre><code class="language-python"># scripts/loadgen_stream.py —— 并发流式压测：TTFT/错误率
+# 用法：python loadgen_stream.py &lt;名称&gt; &lt;base_url&gt; &lt;并发&gt; &lt;总请求&gt;
+import concurrent.futures
+import json
+import pathlib
+import statistics
+import sys
+import time
+
+from openai import OpenAI
+
+name = sys.argv[1]
+base_url = sys.argv[2]
+concurrency = int(sys.argv[3]) if len(sys.argv) &gt; 3 else 16
+total = int(sys.argv[4]) if len(sys.argv) &gt; 4 else 64
+root = pathlib.Path(__file__).resolve().parent.parent
+PROMPT = &quot;请分点说明打印机连不上时的处理步骤。&quot;
+
+def run_once(_):
+    client = OpenAI(base_url=base_url, api_key=&quot;EMPTY&quot;, timeout=120)
+    start = time.time()
+    first_ts = None
+    chunks = 0
+    try:
+        stream = client.chat.completions.create(
+            model=&quot;helpdesk&quot;,
+            messages=[{&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: PROMPT}],
+            max_tokens=150,
+            temperature=0.2,
+            stream=True,
+        )
+        for chunk in stream:
+            if first_ts is None:
+                first_ts = time.time()
+            if chunk.choices[0].delta.content:
+                chunks += 1
+        return {&quot;ok&quot;: True, &quot;ttft&quot;: first_ts - start if first_ts else None, &quot;chunks&quot;: chunks}
+    except Exception as exc:
+        return {&quot;ok&quot;: False, &quot;error&quot;: str(exc)[:100]}
+
+for _ in range(2):
+    run_once(None)
+
+results = []
+with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) as pool:
+    for res in pool.map(run_once, range(total)):
+        results.append(res)
+
+oks = [r for r in results if r[&quot;ok&quot;]]
+ttfts = [r[&quot;ttft&quot;] for r in oks if r[&quot;ttft&quot;] is not None]
+
+def pct(values, p):
+    ordered = sorted(values)
+    return ordered[min(len(ordered) - 1, int(len(ordered) * p))]
+
+report = {&quot;name&quot;: name, &quot;total&quot;: total, &quot;success&quot;: len(oks), &quot;error&quot;: total - len(oks),
+          &quot;ttft_p50_ms&quot;: round(pct(ttfts, 0.5) * 1000, 1) if ttfts else None,
+          &quot;ttft_p95_ms&quot;: round(pct(ttfts, 0.95) * 1000, 1) if ttfts else None}
+out = root / &quot;logs&quot; / (&quot;loadgen_&quot; + name + &quot;.json&quot;)
+with open(out, &quot;w&quot;, encoding=&quot;utf-8&quot;) as f:
+    json.dump(report, f, ensure_ascii=False, indent=2)
+print(json.dumps(report, ensure_ascii=False, indent=2))
+</code></pre>
+<h3 id="step-3-nginx-20">Step 3 双实例 + Nginx 网关（20 分钟）</h3>
+<ol>
+<li>起两个 vLLM 实例（8001/8002 端口，同一模型，max-num-seqs 各 32）；</li>
+<li>Nginx 配置（关键行）：</li>
+</ol>
+<pre><code class="language-nginx">upstream llm_backend {
+    server 127.0.0.1:8001;
+    server 127.0.0.1:8002;
+}
+server {
+    listen 8000;
+    location /v1/ {
+        proxy_pass http://llm_backend;
+        proxy_http_version 1.1;
+        proxy_buffering off;      # 关键：不缓冲 SSE
+        proxy_cache off;
+        proxy_read_timeout 300s;
+        proxy_connect_timeout 5s;
+    }
+}
+</code></pre>
+<ol start="3">
+<li>重启 Nginx 后通过 8000 访问，先跑 stream_client 确认流式正常；</li>
+<li>压测：</li>
+</ol>
+<pre><code class="language-bash">python scripts/loadgen_stream.py gw http://localhost:8000/v1 32 128
+</code></pre>
+<h3 id="step-4-10">Step 4 故障演练（10 分钟）</h3>
+<ol>
+<li>压测进行中 kill 掉一个后端实例；</li>
+<li>观察：网关是否把新请求全部路由到存活实例（健康检查生效）；</li>
+<li>存量流式连接是否正常结束或快速报错（优雅处理）；</li>
+<li>重启被 kill 的实例，确认自动回归；把演练结论写进 docs/ha_runbook.md 并归档：</li>
+</ol>
+<pre><code class="language-bash">cd llm-demo
+git add scripts logs docs
+git commit -m &quot;serving: stream client + loadgen + nginx gateway drill&quot;
+git tag serving-v1
+</code></pre>
+<blockquote>
+<p>生产进阶：K8s 下用 Service/Ingress + HPA（按队列深度/GPU 利用率扩缩），见第 43 章；监控大盘与告警见第 45 章。</p>
+</blockquote>
+<h2 id="06">06 参数详解：服务化配置速查</h2>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>参考</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>proxy_buffering</td>
+<td>off</td>
+<td>SSE 必需</td>
+</tr>
+<tr>
+<td>proxy_read_timeout</td>
+<td>120–600s</td>
+<td>覆盖长生成</td>
+</tr>
+<tr>
+<td>首字超时</td>
+<td>10–30s</td>
+<td>排队/TTFT 预算</td>
+</tr>
+<tr>
+<td>总超时</td>
+<td>60–600s</td>
+<td>按 max_tokens</td>
+</tr>
+<tr>
+<td>限流</td>
+<td>按业务 QPS×峰值系数</td>
+<td>429+Retry-After</td>
+</tr>
+<tr>
+<td>队列深度</td>
+<td>每实例 max-num-seqs×2~4</td>
+<td>有界，防雪崩</td>
+</tr>
+<tr>
+<td>健康探针</td>
+<td>每 30s 真实 1-token 请求</td>
+<td>比 /health 更真</td>
+</tr>
+<tr>
+<td>重试</td>
+<td>仅连接类错误 1 次</td>
+<td>LLM 请求非幂等</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="07">07 高频踩坑排查</h2>
+<p><strong>坑 1：Nginx 缓冲吞流</strong>
+症状：前端等半天才整段出现。
+解法：proxy_buffering off + http1.1 + 长 read timeout。</p>
+<p><strong>坑 2：客户端超时一刀切</strong>
+症状：总超时 30s，排队 20s+生成 15s 的请求被掐。
+解法：首字超时与总超时分开；超时按 P95 设计。</p>
+<p><strong>坑 3：自动重试重复计费</strong>
+症状：网关超时重试，同一个生成请求跑了两遍。
+解法：只重试连接类错误；给请求幂等 ID，业务层去重。</p>
+<p><strong>坑 4：队列无限增长</strong>
+症状：高峰请求全堆内存里，实例没挂网关先挂。
+解法：有界队列+429；压测队列深度监控。</p>
+<p><strong>坑 5：实例热不均</strong>
+症状：轮询下某些实例排队、某些空闲。
+解法：最少连接或队列感知路由；前缀缓存场景用亲和路由。</p>
+<p><strong>坑 6：没有优雅退出</strong>
+症状：发布时 kill 实例，存量流式连接全断。
+解法：摘流量→等存量结束→再杀；K8s 用 preStop+terminationGracePeriod。</p>
+<p><strong>坑 7：只看平均时延</strong>
+症状：均值漂亮，P95 排队 10 秒没人发现。
+解法：TTFT P50/P95/P99 + 队列深度 + 错误率一起看。</p>
+<hr />
+<h2 id="08">08 进阶优化：服务化进化方向</h2>
+<p><strong>① K8s 自动扩缩</strong>：按队列深度/GPU 利用率 HPA，低峰缩容省钱、高峰扩容保体验（第 43 章）。</p>
+<p><strong>② PD 分离路由</strong>：prefill 与 decode 分实例后，网关按请求阶段路由（第 39 章），长 prompt 场景吞吐质变。</p>
+<p><strong>③ 小模型兜底</strong>：队列满或大模型故障时路由到 3B 学生模型（第 22 章），保可用性降体验损失。</p>
+<p><strong>④ 成本路由</strong>：低价值请求走小模型/低峰，高价值请求走大模型——网关变成成本优化器。</p>
+<p><strong>⑤ 全链路观测</strong>：请求 ID 贯穿网关→推理实例→GPU 指标，TTFT/TPOT/队列/错误一键归因（第 45 章）。</p>
+<hr />
+<h2 id="09-top3">09 本章核心总结（TOP3）</h2>
+<p><strong>TOP1</strong>：SSE 流式要过三关：服务端分块、网关关缓冲（proxy_buffering off）、客户端逐块渲染+分级超时。</p>
+<p><strong>TOP2</strong>：高并发 = 多实例 + 健康检查路由 + 有界队列/429 + 优雅退出；重试只限连接类错误一次，防重复计费。</p>
+<p><strong>TOP3</strong>：上线前做故障演练：kill 实例看自动摘除与恢复；监控看 P50/P95/P99 与队列深度，不看平均。</p>
+<hr />
+<h2 id="10">10 连载衔接</h2>
+<p>上一章（第 33 章）管好了 KV 显存；本章把单实例升级为流式高并发服务——网关、队列、健康检查与演练全部就位，部署阶段收官在即。</p>
+<p>下一阶段进入“编译器级”深水区：【第 35 章】推理编译器核心原理：图编译、IR、调度与代码生成。</p>
+<hr />
+<h2 id="11">11 话题标签与系列目录索引</h2>
+<p>话题标签：<strong>#LLM全栈工程 #SSE #流式输出 #高并发 #负载均衡 #服务化 #工程实战</strong>（Voice前沿 出品，欢迎收藏追更）</p>
+<p><strong>系列目录（46 章，随连载持续更新）</strong></p>
+<p>第 0 阶段·开篇引路
+- 01 一条大模型生产线全程发生了什么
+- 02 2 小时跑通最小闭环
+- 03 预训练到底在练什么</p>
+<p>第 1 阶段·预训练工程·数据核心层
+- 04 数据管道从零构建
+- 05 数据清洗规范与脏数据剔除
+- 06 文本过滤实战
+- 07 数据去重算法
+- 08 敏感数据脱敏
+- 09 数据质量打分体系
+- 10 领域专属数据构建
+- 11 增量预训练方案
+- 12 预训练超参选型与硬件适配
+- 13 断点续训、收敛判断与失败排查</p>
+<p>第 2 阶段·微调与对齐体系
+- 14 全维度微调技术拆解
+- 15 SFT 监督微调实战
+- 16 SFT 数据集构建与标注规范
+- 17 微调模板设计
+- 18 微调超参调优策略
+- 19 过拟合、欠拟合与灾难遗忘
+- 20 微调效果评估体系
+- 21 多轮对话微调专项
+- 22 模型蒸馏实战
+- 23 奖励模型训练
+- 24 RLHF/PPO 工程落地
+- 25 RLAIF：AI 反馈自动对齐
+- 26 小样本与领域自适应微调</p>
+<p>第 3 阶段·基础部署与推理优化
+- 27 部署框架横向对比
+- 28 vLLM 部署实战与参数调优
+- 29 SGLang 高性能推理落地
+- 30 TensorRT-LLM 固化与加速
+- 31 模型量化实操
+- 32 模型剪枝与蒸馏压缩
+- 33 KV Cache 优化与上下文窗口拓展
+- 34 流式推理封装与高并发服务化（本篇）</p>
+<p>第 4 阶段·高阶推理编译器极致优化
+- 35 推理编译器核心原理
+- 36 算子融合与计算图编译
+- 37 动态 shape 与显存编译器优化
+- 38 Speculative Decoding 投机推理进阶
+- 39 批量调度与并行深度适配
+- 40 内核重构与编译级量化</p>
+<p>第 5 阶段·全栈工程联调与项目落地
+- 41 全链路串联：数据到上线一体化流程
+- 42 领域大模型定制化落地
+- 43 高并发生产适配与端侧部署
+- 44 模型迭代升级与性能对标评测
+- 45 线上问题闭环排查
+- 46 工程化最佳实践汇总（手册终章）</p>
+<hr />
+<p><em>本文由 Voice前沿 出品 · 转载注明出处 · 下一篇：第 35 章 推理编译器核心原理</em></p>
+</article>
+<nav class="prevnext"><a href="ch33.html">← 第 33 章 【LLM全栈工程·第33章】KV Cache 优化与上下文窗口拓展：长上下文的成本与解法</a><a href="ch35.html" style="text-align:right">第 35 章 【LLM全栈工程·第35章】推理编译器核心原理：图编译、IR、调度与代码生成 →</a></nav>
+</main>
+<footer class="wrap"><p>LLM 全栈工程 · Voice前沿 出品 · 46 章连载 · 收藏即手册</p></footer>
+</body>
+</html>

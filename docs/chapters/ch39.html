@@ -1,0 +1,510 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>【LLM全栈工程·第39章】批量调度与并行深度适配：continuous batching、PD 分离与 TP/PP/EP · LLM 全栈工程</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header"><div class="wrap">
+<a class="brand" href="../index.html">LLM 全栈工程<small>LLM 工业级全栈工程落地手册 · 46 章</small></a>
+<nav><a href="../index.html">目录</a><a href="https://github.com/">GitHub 仓库</a></nav>
+</div></header>
+<main class="wrap">
+<nav class="crumbs"><a href="../index.html">全部章节</a> / 【LLM全栈工程·第39章】批量调度与并行深度适配：continuous batching、PD 分离与 TP/PP/EP</nav>
+<details class="toc-box"><summary>本章目录</summary><div class="toc">
+<ul>
+<li><a href="#_1">单篇内容卡（排版本忽略）</a></li>
+<li><a href="#01">01 开篇导语</a></li>
+<li><a href="#02">02 白话原理：先调度后并行</a><ul>
+<li><a href="#21-continuous-batching">2.1 Continuous Batching</a></li>
+<li><a href="#22-prefill-decode">2.2 Prefill 与 Decode 的不对称</a></li>
+<li><a href="#23-pd">2.3 PD 分离的代价</a></li>
+</ul>
+</li>
+<li><a href="#03">03 并行策略全家桶</a><ul>
+<li><a href="#31">3.1 选型四问</a></li>
+<li><a href="#32">3.2 组合示例</a></li>
+</ul>
+</li>
+<li><a href="#05-1">05 分步实操：调度压测与并行规划（约 1 小时）</a><ul>
+<li><a href="#step-1-5">Step 1 并行方案助手（5 分钟）</a></li>
+<li><a href="#step-2-batch-15">Step 2 Batch 阶梯压测（15 分钟）</a></li>
+<li><a href="#step-3-tp-vs-dp20-2">Step 3 多卡实测：TP vs DP（20 分钟，需要 ≥2 卡）</a></li>
+<li><a href="#step-4-pd-10">Step 4 PD 分离评估（10 分钟）</a></li>
+</ul>
+</li>
+<li><a href="#06">06 参数详解：调度与并行速查</a></li>
+<li><a href="#07">07 高频踩坑排查</a></li>
+<li><a href="#08">08 进阶优化：调度与并行进化方向</a></li>
+<li><a href="#09-top3">09 本章核心总结（TOP3）</a></li>
+<li><a href="#10">10 连载衔接</a></li>
+<li><a href="#11">11 话题标签与系列目录索引</a></li>
+</ul>
+</div>
+</details>
+<article class="article">
+<h1 id="llm39continuous-batchingpd-tpppep">【LLM全栈工程·第39章】批量调度与并行深度适配：continuous batching、PD 分离与 TP/PP/EP</h1>
+<blockquote>
+<p>本篇为「LLM全栈工程」连载第 39 章（Voice前沿）。主标题以上为准；备选标题（供运营选用，不进正文）：① 单卡到多卡：推理并行策略 TP/PP/DP/EP 怎么选；② Prefill 和 Decode 为什么要分开？PD 分离架构；③ Continuous Batching 的调度艺术与压测方法。</p>
+</blockquote>
+<hr />
+<h2 id="_1">单篇内容卡（排版本忽略）</h2>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>章节定位</td>
+<td>「高阶推理编译器极致优化」第 5 篇：调度与集群并行，把单卡优化放大到多卡</td>
+</tr>
+<tr>
+<td>适用场景</td>
+<td>个人学习（batch 压测）；小团队多卡部署；企业大模型集群</td>
+</tr>
+<tr>
+<td>核心知识点</td>
+<td>continuous batching；prefill/decode 不对称；PD 分离；TP/PP/DP/EP</td>
+</tr>
+<tr>
+<td>技术选型</td>
+<td>TP/PP/DP/EP/PD 组合决策</td>
+</tr>
+<tr>
+<td>分步实操</td>
+<td>batch 阶梯压测 → 并行方案规划 → 多卡实测（TP vs DP）→ PD 评估与归档</td>
+</tr>
+<tr>
+<td>参数详解</td>
+<td>max-num-seqs、chunked prefill、TP/PP/DP 规模、PD KV 传输</td>
+</tr>
+<tr>
+<td>踩坑排查</td>
+<td>TP 跨普通网络、小模型过度并行、PP 小 batch 气泡、PD 传输开销</td>
+</tr>
+<tr>
+<td>进阶优化</td>
+<td>MoE EP、disaggregated KV、chunked prefill 调优、路由器 PD</td>
+</tr>
+<tr>
+<td>本章 TOP3</td>
+<td>见文末</td>
+</tr>
+<tr>
+<td>下章预告</td>
+<td>第 40 章：内核重构与编译级量化</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="01">01 开篇导语</h2>
+<p>单卡优化到顶后，性能增长来自两个方向：<strong>同一时刻多塞请求（调度）</strong>与<strong>把模型/流量摊到多卡（并行）</strong>。</p>
+<p>调度侧的核心是 Continuous Batching：请求不是“整批进整批出”，而是谁完成谁走、新请求随时插入——GPU 永远不空等。并行侧则要回答：模型太大用 TP，流量太大用 DP，时延敏感用 PD，MoE 用 EP。</p>
+<p>本章先讲调度，再讲并行，最后给决策脚本与压测流程。</p>
+<blockquote>
+<p>一句话记住本章：<strong>调度解决“单卡别闲着”，并行解决“多卡怎么分工”；prefill 吃算力、decode 吃带宽——把它们分开（PD）是生产级时延优化的关键一步。</strong></p>
+</blockquote>
+<hr />
+<h2 id="02">02 白话原理：先调度后并行</h2>
+<h3 id="21-continuous-batching">2.1 Continuous Batching</h3>
+<p>传统静态批：一批 32 个请求全部生成完才进下一批——最后几个慢请求拖住整批。连续批处理：每个 token 步后，完成的请求立刻退出、新请求立刻补入——平均排队时间大幅下降，吞吐提升。</p>
+<h3 id="22-prefill-decode">2.2 Prefill 与 Decode 的不对称</h3>
+<table>
+<thead>
+<tr>
+<th>阶段</th>
+<th>特征</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Prefill（读题）</td>
+<td>计算密集：一次算完整段 prompt</td>
+</tr>
+<tr>
+<td>Decode（答题）</td>
+<td>带宽密集：每步只产 1 token</td>
+</tr>
+</tbody>
+</table>
+<p>两种阶段挤在同一批里会互相拖累（长 prefill 让 decode 请求等很久）。<strong>Chunked Prefill</strong> 把大 prompt 切成块插入 decode 间隙；<strong>PD 分离</strong>则让 prefill 与 decode 各用一批实例。</p>
+<h3 id="23-pd">2.3 PD 分离的代价</h3>
+<p>prefill 实例算完要把 KV 传给 decode 实例（网络传输），因此收益取决于：prefill/decode 时长比、KV 大小、网络带宽。长 prompt、高并发场景收益最大，短请求场景可能得不偿失。</p>
+<blockquote>
+<p>记忆锚点：<strong>Chunked Prefill 是“时间片穿插”，PD 分离是“流水线分工”；它们都在解决 prefill 与 decode 抢资源的问题。</strong></p>
+</blockquote>
+<h2 id="03">03 并行策略全家桶</h2>
+<table>
+<thead>
+<tr>
+<th>策略</th>
+<th>拆什么</th>
+<th>通信</th>
+<th>解决什么</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>TP（张量并行）</td>
+<td>每层拆到多卡</td>
+<td>每层 allreduce，极高</td>
+<td>单卡放不下/单层太大</td>
+</tr>
+<tr>
+<td>PP（流水线并行）</td>
+<td>层分段放不同卡</td>
+<td>段间传输，较低</td>
+<td>多节点大模型</td>
+</tr>
+<tr>
+<td>DP（数据并行）</td>
+<td>整模型复制、切流量</td>
+<td>几乎无</td>
+<td>吞吐扩容</td>
+</tr>
+<tr>
+<td>EP（专家并行）</td>
+<td>MoE 专家分布到卡</td>
+<td>all2all</td>
+<td>MoE 模型</td>
+</tr>
+<tr>
+<td>PD（阶段分离）</td>
+<td>prefill/decode 分工</td>
+<td>KV 传输</td>
+<td>时延与吞吐</td>
+</tr>
+</tbody>
+</table>
+<h3 id="31">3.1 选型四问</h3>
+<ol>
+<li><strong>模型单卡放得下吗？</strong> 放得下→先 DP/调度；放不下→TP（节点内）或 PP（跨节点）；</li>
+<li><strong>卡间是什么网络？</strong> NVLink 可 TP；普通以太网优先 DP/PP；</li>
+<li><strong>流量是时延敏感还是吞吐优先？</strong> 时延敏感→PD/更小 batch；吞吐→DP+连续批；</li>
+<li><strong>是 MoE 吗？</strong> 是→EP 是核心，配合 TP。</li>
+</ol>
+<h3 id="32">3.2 组合示例</h3>
+<table>
+<thead>
+<tr>
+<th>场景</th>
+<th>推荐组合</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>7B 单机 4×80GB</td>
+<td>DP×4 或 TP×2+DP×2（看流量）</td>
+</tr>
+<tr>
+<td>70B 单机 8×80GB</td>
+<td>TP×8（NVLink）</td>
+</tr>
+<tr>
+<td>70B 跨 4 节点</td>
+<td>TP×4 + PP×4（或 TP×8+PP×2）</td>
+</tr>
+<tr>
+<td>MoE 大模型</td>
+<td>EP + TP 组合</td>
+</tr>
+<tr>
+<td>高并发低时延</td>
+<td>PD 分离 + DP</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>铁律：<strong>TP 只用在 NVLink 级互联；小模型别过度并行（通信开销可能大于收益）；并行方案要用压测验证，别按感觉组合。</strong></p>
+</blockquote>
+<h2 id="05-1">05 分步实操：调度压测与并行规划（约 1 小时）</h2>
+<h3 id="step-1-5">Step 1 并行方案助手（5 分钟）</h3>
+<p>保存 scripts/parallel_plan.py：</p>
+<pre><code class="language-python"># scripts/parallel_plan.py —— 推理并行方案建议
+# 用法：python parallel_plan.py &lt;模型B&gt; &lt;卡数&gt; &lt;单卡GB&gt; &lt;nvlink|eth&gt; &lt;moe:y/n&gt; &lt;latency|throughput&gt;
+import sys
+
+model_b = float(sys.argv[1])
+n_gpu = int(sys.argv[2])
+vram = int(sys.argv[3])
+net = sys.argv[4] if len(sys.argv) &gt; 4 else &quot;nvlink&quot;
+is_moe = (sys.argv[5] if len(sys.argv) &gt; 5 else &quot;n&quot;).lower() == &quot;y&quot;
+traffic = sys.argv[6] if len(sys.argv) &gt; 6 else &quot;throughput&quot;
+
+weights_gb = model_b * 2  # BF16 权重
+total_vram = n_gpu * vram * 0.8
+print(&quot;模型权重约 %.0fGB，可用显存约 %.0fGB&quot; % (weights_gb, total_vram))
+
+if weights_gb &gt; total_vram:
+    print(&quot;单机放不下：需要多节点 PP 或量化；TP 仅在节点内&quot;)
+elif is_moe:
+    print(&quot;推荐：EP 为核心，配合 TP；MoE 的 all2all 需要高速互联&quot;)
+elif n_gpu == 1:
+    print(&quot;单卡即可：先连续批处理与 PD 之外的单机优化&quot;)
+elif net == &quot;nvlink&quot; and weights_gb &gt; vram * 0.8:
+    print(&quot;推荐：TP=%d（模型放不下单卡且节点内互联好）&quot; % n_gpu)
+elif traffic == &quot;latency&quot;:
+    print(&quot;推荐：PD 分离（如框架支持）+ 小 batch；TP 按模型大小&quot;)
+else:
+    print(&quot;推荐：DP=%d 扩容吞吐；模型放不下时节点内 TP、跨节点 PP&quot; % n_gpu)
+</code></pre>
+<p>试算：</p>
+<pre><code class="language-bash">python scripts/parallel_plan.py 7 4 80 nvlink n throughput
+python scripts/parallel_plan.py 70 8 80 nvlink n latency
+python scripts/parallel_plan.py 70 32 80 eth n throughput
+</code></pre>
+<h3 id="step-2-batch-15">Step 2 Batch 阶梯压测（15 分钟）</h3>
+<p>保存 scripts/batch_sweep.py：</p>
+<pre><code class="language-python"># scripts/batch_sweep.py —— 连续批处理阶梯压测
+# 用法：python batch_sweep.py &lt;名称&gt; &lt;base_url&gt;
+import concurrent.futures
+import json
+import pathlib
+import statistics
+import sys
+import time
+
+from openai import OpenAI
+
+name = sys.argv[1]
+base_url = sys.argv[2]
+root = pathlib.Path(__file__).resolve().parent.parent
+LEVELS = [1, 4, 16, 64]
+PROMPT = &quot;请分点说明打印机连不上时的处理步骤。&quot;
+
+def run_level(concurrency, total=24):
+    def once(_):
+        client = OpenAI(base_url=base_url, api_key=&quot;EMPTY&quot;, timeout=120)
+        t0 = time.time()
+        resp = client.chat.completions.create(
+            model=&quot;helpdesk&quot;, messages=[{&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: PROMPT}],
+            max_tokens=150, temperature=0.2, stream=False)
+        return time.time() - t0
+    for _ in range(2):
+        once(None)
+    times = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) as pool:
+        for t in pool.map(once, range(total)):
+            times.append(t)
+    return {&quot;concurrency&quot;: concurrency, &quot;avg_ms&quot;: round(statistics.mean(times) * 1000, 1),
+            &quot;p95_ms&quot;: round(sorted(times)[int(len(times) * 0.95)] * 1000, 1),
+            &quot;req_per_min&quot;: round(60.0 / statistics.mean(times), 1)}
+
+rows = [run_level(c) for c in LEVELS]
+print(&quot;| 并发 | avg ms | p95 ms | req/min |&quot;)
+print(&quot;|---|---|---|---|&quot;)
+for r in rows:
+    print(&quot;| %d | %.1f | %.1f | %.1f |&quot; % (r[&quot;concurrency&quot;], r[&quot;avg_ms&quot;], r[&quot;p95_ms&quot;], r[&quot;req_per_min&quot;]))
+with open(root / &quot;logs&quot; / (&quot;batch_sweep_&quot; + name + &quot;.json&quot;), &quot;w&quot;, encoding=&quot;utf-8&quot;) as f:
+    json.dump(rows, f, ensure_ascii=False, indent=2)
+</code></pre>
+<p>运行并读拐点：</p>
+<pre><code class="language-bash">python scripts/batch_sweep.py single http://localhost:8000/v1
+</code></pre>
+<p><strong>判读</strong>：req/min 增长变平=实例饱和；p95 暴涨=排队严重；拐点处的并发就是该实例的“甜点区”。</p>
+<h3 id="step-3-tp-vs-dp20-2">Step 3 多卡实测：TP vs DP（20 分钟，需要 ≥2 卡）</h3>
+<p><strong>TP=2（模型拆到 2 卡）</strong>：</p>
+<pre><code class="language-bash">vllm serve models/helpdesk-sft-merged --served-model-name helpdesk-tp2 --tensor-parallel-size 2 --port 8001
+python scripts/batch_sweep.py tp2 http://localhost:8001/v1
+</code></pre>
+<p><strong>DP=2（两台单卡实例 + 网关轮询）</strong>：起两个单卡 vLLM（8002/8003），Nginx 轮询到 8004，压测：</p>
+<pre><code class="language-bash">python scripts/batch_sweep.py dp2 http://localhost:8004/v1
+</code></pre>
+<p>对比表：</p>
+<table>
+<thead>
+<tr>
+<th>方案</th>
+<th>req/min 甜点</th>
+<th>p95</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>单卡</td>
+<td>?</td>
+<td>?</td>
+<td>基线</td>
+</tr>
+<tr>
+<td>TP=2</td>
+<td>?</td>
+<td>?</td>
+<td>单请求更快？</td>
+</tr>
+<tr>
+<td>DP=2</td>
+<td>?</td>
+<td>?</td>
+<td>吞吐更高？</td>
+</tr>
+</tbody>
+</table>
+<p><strong>典型结论</strong>：小模型（7B）单卡放得下时，DP 通常比 TP 吞吐更好（TP 通信开销）；模型单卡放不下时才必须 TP。<strong>用你的数据验证，不要照搬。</strong></p>
+<h3 id="step-4-pd-10">Step 4 PD 分离评估（10 分钟）</h3>
+<p>PD 分离（prefill/decode 分工）依赖框架支持与网络条件：</p>
+<ol>
+<li>查所用框架官方“disaggregated serving/PD”文档与版本要求；</li>
+<li>支持则部署 prefill 池 + decode 池，用长 prompt+高并发压测对比 TTFT/TPOT；</li>
+<li>不支持则用 chunked prefill + 连续批处理近似（vLLM 的 max-num-batched-tokens）；</li>
+<li>记录架构与收益：</li>
+</ol>
+<pre><code class="language-bash">cd llm-demo
+git add scripts logs
+git commit -m &quot;sched: parallel plan + batch sweep + TP/DP compare&quot;
+git tag sched-parallel-v1
+</code></pre>
+<blockquote>
+<p>PD 不是银弹：KV 网络传输可能吃掉收益；先小规模 PoC 再全量。</p>
+</blockquote>
+<h2 id="06">06 参数详解：调度与并行速查</h2>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>参考</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>max-num-seqs</td>
+<td>甜点区×1.2~1.5</td>
+<td>用 batch_sweep 找</td>
+</tr>
+<tr>
+<td>max-num-batched-tokens</td>
+<td>2048–8192</td>
+<td>chunked prefill 分块</td>
+</tr>
+<tr>
+<td>TP size</td>
+<td>模型放不下时 2–8</td>
+<td>需 NVLink</td>
+</tr>
+<tr>
+<td>DP size</td>
+<td>按吞吐需求</td>
+<td>整模型复制</td>
+</tr>
+<tr>
+<td>PP size</td>
+<td>多节点大模型</td>
+<td>气泡随 batch 增大减少</td>
+</tr>
+<tr>
+<td>EP size</td>
+<td>MoE 专家数相关</td>
+<td>all2all 互联</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="07">07 高频踩坑排查</h2>
+<p><strong>坑 1：TP 用在普通网络</strong>
+症状：跨节点 TP 通信比计算还慢。
+解法：TP 限 NVLink 节点内；跨节点用 PP/DP。</p>
+<p><strong>坑 2：小模型过度并行</strong>
+症状：7B 拆 TP=8，吞吐不升反降。
+解法：单卡放得下就 DP/调度优先；并行按压测定。</p>
+<p><strong>坑 3：PP 小 batch 气泡</strong>
+症状：流水线空闲气泡吃掉收益。
+解法：PP 配大 batch/多请求；小 batch 用 TP。</p>
+<p><strong>坑 4：PD 传输开销被忽略</strong>
+症状：KV 网络传输比节省的算力还贵。
+解法：先小规模 PoC；长 prompt 高并发才划算。</p>
+<p><strong>坑 5：静态批没换连续批</strong>
+症状：整批进出，慢请求拖全队。
+解法：确认框架开 continuous batching（vLLM 默认）。</p>
+<p><strong>坑 6：MoE 不用 EP</strong>
+症状：MoE 模型纯 TP/DP，专家负载不均。
+解法：EP 分布专家；all2all 需要高速互联。</p>
+<p><strong>坑 7：只测平均不测拐点</strong>
+症状：并发加到 256 全在排队，均值还行。
+解法：batch_sweep 看 req/min 拐点与 p95。</p>
+<hr />
+<h2 id="08">08 进阶优化：调度与并行进化方向</h2>
+<p><strong>① Disaggregated KV</strong>：PD 分离后 KV 高效传输/缓存，长 prompt 场景 TTFT 与 TPOT 双优。</p>
+<p><strong>② MoE EP 深化</strong>：专家负载均衡路由、EP+TP 组合、跨节点 all2all 优化。</p>
+<p><strong>③ Chunked Prefill 自调优</strong>：按请求长度分布自动切 chunk，让 decode 间隙被完美利用。</p>
+<p><strong>④ 路由级 PD</strong>：网关把长 prompt 请求路由到 prefill 池、短请求直接 decode——混合架构。</p>
+<p><strong>⑤ 集群调度与装箱</strong>：多模型共享 GPU 池，按模型/流量动态装箱（第 43 章），利用率再上一个台阶。</p>
+<hr />
+<h2 id="09-top3">09 本章核心总结（TOP3）</h2>
+<p><strong>TOP1</strong>：调度解决“单卡别闲着”：continuous batching 是基础，chunked prefill 穿插长短请求，PD 分离是生产级时延优化的关键。</p>
+<p><strong>TOP2</strong>：并行选型四问：放不放得下（TP）、什么网络（NVLink 才 TP）、时延还是吞吐（PD/DP）、是不是 MoE（EP）；小模型别过度并行。</p>
+<p><strong>TOP3</strong>：用 batch_sweep 找甜点区、用 TP vs DP 实测做决策；PD 先 PoC 验证 KV 传输收益再全量。</p>
+<hr />
+<h2 id="10">10 连载衔接</h2>
+<p>上一章（第 38 章）优化了 decode 单步；本章把调度与并行放大到整机/集群——连续批、PD、TP/PP/DP/EP 的决策树都齐了。</p>
+<p>下一章是编译器阶段的最后一战：【第 40 章】内核重构与编译级量化：硬件指令集与极致优化总纲。</p>
+<hr />
+<h2 id="11">11 话题标签与系列目录索引</h2>
+<p>话题标签：<strong>#LLM全栈工程 #ContinuousBatching #PD分离 #张量并行 #MoE #推理优化 #工程实战</strong>（Voice前沿 出品，欢迎收藏追更）</p>
+<p><strong>系列目录（46 章，随连载持续更新）</strong></p>
+<p>第 0 阶段·开篇引路
+- 01 一条大模型生产线全程发生了什么
+- 02 2 小时跑通最小闭环
+- 03 预训练到底在练什么</p>
+<p>第 1 阶段·预训练工程·数据核心层
+- 04 数据管道从零构建
+- 05 数据清洗规范与脏数据剔除
+- 06 文本过滤实战
+- 07 数据去重算法
+- 08 敏感数据脱敏
+- 09 数据质量打分体系
+- 10 领域专属数据构建
+- 11 增量预训练方案
+- 12 预训练超参选型与硬件适配
+- 13 断点续训、收敛判断与失败排查</p>
+<p>第 2 阶段·微调与对齐体系
+- 14 全维度微调技术拆解
+- 15 SFT 监督微调实战
+- 16 SFT 数据集构建与标注规范
+- 17 微调模板设计
+- 18 微调超参调优策略
+- 19 过拟合、欠拟合与灾难遗忘
+- 20 微调效果评估体系
+- 21 多轮对话微调专项
+- 22 模型蒸馏实战
+- 23 奖励模型训练
+- 24 RLHF/PPO 工程落地
+- 25 RLAIF：AI 反馈自动对齐
+- 26 小样本与领域自适应微调</p>
+<p>第 3 阶段·基础部署与推理优化
+- 27 部署框架横向对比
+- 28 vLLM 部署实战与参数调优
+- 29 SGLang 高性能推理落地
+- 30 TensorRT-LLM 固化与加速
+- 31 模型量化实操
+- 32 模型剪枝与蒸馏压缩
+- 33 KV Cache 优化与上下文窗口拓展
+- 34 流式推理封装与高并发服务化</p>
+<p>第 4 阶段·高阶推理编译器极致优化
+- 35 推理编译器核心原理
+- 36 算子融合与计算图编译实战
+- 37 动态 shape 与显存编译器优化
+- 38 Speculative Decoding 投机推理进阶
+- 39 批量调度与并行深度适配（本篇）
+- 40 内核重构与编译级量化</p>
+<p>第 5 阶段·全栈工程联调与项目落地
+- 41 全链路串联：数据到上线一体化流程
+- 42 领域大模型定制化落地
+- 43 高并发生产适配与端侧部署
+- 44 模型迭代升级与性能对标评测
+- 45 线上问题闭环排查
+- 46 工程化最佳实践汇总（手册终章）</p>
+<hr />
+<p><em>本文由 Voice前沿 出品 · 转载注明出处 · 下一篇：第 40 章 内核重构与编译级量化</em></p>
+</article>
+<nav class="prevnext"><a href="ch38.html">← 第 38 章 【LLM全栈工程·第38章】Speculative Decoding 投机推理进阶：让大模型“先猜后验”</a><a href="ch40.html" style="text-align:right">第 40 章 【LLM全栈工程·第40章】内核重构与编译级量化：硬件指令集与极致优化总纲 →</a></nav>
+</main>
+<footer class="wrap"><p>LLM 全栈工程 · Voice前沿 出品 · 46 章连载 · 收藏即手册</p></footer>
+</body>
+</html>

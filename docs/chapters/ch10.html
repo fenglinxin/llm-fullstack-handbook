@@ -1,0 +1,619 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>【LLM全栈工程·第10章】领域专属数据构建：采集、清洗与合成数据 · LLM 全栈工程</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header"><div class="wrap">
+<a class="brand" href="../index.html">LLM 全栈工程<small>LLM 工业级全栈工程落地手册 · 46 章</small></a>
+<nav><a href="../index.html">目录</a><a href="https://github.com/">GitHub 仓库</a></nav>
+</div></header>
+<main class="wrap">
+<nav class="crumbs"><a href="../index.html">全部章节</a> / 【LLM全栈工程·第10章】领域专属数据构建：采集、清洗与合成数据</nav>
+<details class="toc-box"><summary>本章目录</summary><div class="toc">
+<ul>
+<li><a href="#_1">单篇内容卡（排版本忽略）</a></li>
+<li><a href="#01">01 开篇导语</a></li>
+<li><a href="#02">02 白话原理：领域数据到底“补”了什么</a><ul>
+<li><a href="#21">2.1 领域模型的三个缺口</a></li>
+<li><a href="#22">2.2 领域数据为什么“少而贵”</a></li>
+<li><a href="#23-vs-rag">2.3 领域模型 vs RAG：先想清楚路线</a></li>
+</ul>
+</li>
+<li><a href="#03">03 领域数据三路来源与四类形态</a><ul>
+<li><a href="#31">3.1 三路来源</a></li>
+<li><a href="#32">3.2 四类领域数据形态</a></li>
+</ul>
+</li>
+<li><a href="#04">04 技术选型：解析、合成与质量校验怎么配</a><ul>
+<li><a href="#41">4.1 文档解析方案</a></li>
+<li><a href="#42">4.2 合成数据方案</a></li>
+<li><a href="#43">4.3 合成数据防幻觉三件套</a></li>
+</ul>
+</li>
+<li><a href="#05-40">05 分步实操：从领域文档到问答语料（40 分钟）</a><ul>
+<li><a href="#step-1-10">Step 1 建目录并写一份“领域知识库”样例（10 分钟）</a></li>
+<li><a href="#step-2-10">Step 2 解析成结构化领域语料（10 分钟）</a></li>
+<li><a href="#step-3-10">Step 3 模板合成领域问答对（10 分钟）</a></li>
+<li><a href="#step-4-10">Step 4 质检与打版本（10 分钟）</a></li>
+<li><a href="#step-5-09-5">Step 5 接入统一打分（衔接第 09 章，5 分钟）</a></li>
+</ul>
+</li>
+<li><a href="#06">06 参数详解：领域数据构建速查</a></li>
+<li><a href="#07">07 高频踩坑排查</a></li>
+<li><a href="#08">08 进阶优化：领域数据构建的进化方向</a></li>
+<li><a href="#09-top3">09 本章核心总结（TOP3）</a></li>
+<li><a href="#10">10 连载衔接</a></li>
+<li><a href="#11">11 话题标签与系列目录索引</a></li>
+</ul>
+</div>
+</details>
+<article class="article">
+<h1 id="llm10">【LLM全栈工程·第10章】领域专属数据构建：采集、清洗与合成数据</h1>
+<blockquote>
+<p>本篇为「LLM全栈工程」连载第 10 章（Voice前沿）。主标题以上为准；备选标题（供运营选用，不进正文）：① 通用语料让模型“会说话”，领域数据让模型“懂行”；② 领域数据从哪来：内部语料、外部语料与合成数据三路并进；③ 合成数据不是注水：模板合成、LLM 生成与事实校验的正确姿势。</p>
+</blockquote>
+<hr />
+<h2 id="_1">单篇内容卡（排版本忽略）</h2>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>章节定位</td>
+<td>「预训练工程·数据核心层」第 8 篇：构建主线工程所需的领域专属语料，衔接第 11 章增量预训练</td>
+</tr>
+<tr>
+<td>适用场景</td>
+<td>个人学习（帮助台/垂直小领域）；小团队做领域模型；企业私有化领域大模型立项前的数据摸底</td>
+</tr>
+<tr>
+<td>核心知识点</td>
+<td>领域数据的价值与类型；真实/外部/合成三路采集；规则模板合成与 LLM 合成；领域质量信号与配比</td>
+</tr>
+<tr>
+<td>技术选型</td>
+<td>内部系统导出 vs 外部公开语料 vs 模板/LLM 合成；解析工具与合成策略对比</td>
+</tr>
+<tr>
+<td>分步实操</td>
+<td>建 domain_sources → 写领域知识库 → 解析成结构化语料 → 模板合成问答对 → 质检与打版本</td>
+</tr>
+<tr>
+<td>参数详解</td>
+<td>领域占比、合成比例、模板数、随机种子、领域词密度、评测隔离</td>
+</tr>
+<tr>
+<td>踩坑排查</td>
+<td>领域过窄过拟合、合成幻觉、OCR/格式噪声、专家不参与、真实与合成比例失衡</td>
+</tr>
+<tr>
+<td>进阶优化</td>
+<td>LLM 合成+事实校验、主动学习回流、领域评测集、多领域配比</td>
+</tr>
+<tr>
+<td>本章 TOP3</td>
+<td>见文末</td>
+</tr>
+<tr>
+<td>下章预告</td>
+<td>第 11 章：增量预训练方案</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="01">01 开篇导语</h2>
+<p>前七章我们把通用数据管道建到了“打分”阶段：任何语料进来，都能被清洗、过滤、去重、脱敏并打上质量分。</p>
+<p>但通用语料解决的是“会说话”，解决不了“懂行”。你的模型可能很会聊天，却不知道你们公司的打印机型号、报销流程、内部系统的正确叫法——这些知识只存在于你的领域数据里。</p>
+<p>本章聚焦主线工程的“领域一跃”：<strong>领域专属数据怎么来、怎么变成模型能学的形态</strong>。我们会走完三条路：</p>
+<ol>
+<li><strong>内部真实数据</strong>：工单、知识库、文档、对话记录（价值最高，合规最严）；</li>
+<li><strong>外部公开语料</strong>：行业文档、论文、法规、社区（补充广度，注意版权）；</li>
+<li><strong>合成数据</strong>：模板合成 + LLM 生成（解决“量不够”，但必须防幻觉）。</li>
+</ol>
+<p>交付物：一个从“领域知识库文档”到“结构化语料 + 合成问答对”的可复现构建流程——它就是主线工程后续 CPT/SFT 的“弹药库”。</p>
+<blockquote>
+<p>一句话记住本章：<strong>领域数据构建 = 找对来源（真实为主）+ 转对格式（结构化解析）+ 补足数量（合成为辅）+ 守住真实（专家校验）。</strong></p>
+</blockquote>
+<hr />
+<h2 id="02">02 白话原理：领域数据到底“补”了什么</h2>
+<h3 id="21">2.1 领域模型的三个缺口</h3>
+<table>
+<thead>
+<tr>
+<th>缺口</th>
+<th>例子</th>
+<th>靠什么补</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>知识缺口</td>
+<td>公司打印机型号、内部系统名称</td>
+<td>内部文档/知识库</td>
+</tr>
+<tr>
+<td>格式缺口</td>
+<td>工单格式、报告模板、术语叫法</td>
+<td>真实业务样例</td>
+</tr>
+<tr>
+<td>行为缺口</td>
+<td>“先查知识库再回答”“拒绝编造型号”</td>
+<td>规则/对话/指令数据</td>
+</tr>
+</tbody>
+</table>
+<h3 id="22">2.2 领域数据为什么“少而贵”</h3>
+<p>通用语料按 TB 算，领域语料常常只有几万到几百万条，而且：格式杂（PDF/Word/网页/数据库）、噪声大（OCR 错误、表格错位）、敏感多（客户信息）、更新快（规则三个月一变）。</p>
+<p>所以领域数据构建的核心不是“爬得多”，而是<strong>把少量高价值数据洗成高质量、可复用、可版本化的资产</strong>——前几章的管道在这里全部派上用场。</p>
+<h3 id="23-vs-rag">2.3 领域模型 vs RAG：先想清楚路线</h3>
+<ul>
+<li>知识会频繁更新 → 优先 RAG（检索增强），数据维护成本低；</li>
+<li>需要稳定的格式/行为/推理风格 → 微调/增量预训练；</li>
+<li>两者常结合：RAG 喂最新知识，微调教格式与行为。</li>
+</ul>
+<p>本章只讲“数据怎么构建”，路线选择（RAG/微调/CPT 怎么配）在第 42 章领域落地时给完整决策树。</p>
+<h2 id="03">03 领域数据三路来源与四类形态</h2>
+<h3 id="31">3.1 三路来源</h3>
+<table>
+<thead>
+<tr>
+<th>来源</th>
+<th>例子</th>
+<th>价值</th>
+<th>主要成本/风险</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>内部真实数据</td>
+<td>工单、知识库、SOP、客服对话、产品文档</td>
+<td>最高（真实格式+真实知识）</td>
+<td>合规脱敏、格式杂、量少</td>
+</tr>
+<tr>
+<td>外部公开语料</td>
+<td>行业白皮书、论文、法规、专业社区、开放数据集</td>
+<td>中高（补广度）</td>
+<td>版权/授权、领域纯度</td>
+</tr>
+<tr>
+<td>合成数据</td>
+<td>模板合成问答、LLM 生成指令/推理链</td>
+<td>中（补数量/覆盖）</td>
+<td>幻觉、同质化、需要校验</td>
+</tr>
+</tbody>
+</table>
+<p><strong>真实为主、合成为辅</strong>是铁律：合成数据只能补“形态与数量”，补不了“真实业务的最新事实”。</p>
+<h3 id="32">3.2 四类领域数据形态</h3>
+<table>
+<thead>
+<tr>
+<th>形态</th>
+<th>用途</th>
+<th>典型来源</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>长文档（规则/手册）</td>
+<td>增量预训练、RAG 知识源</td>
+<td>知识库、产品手册</td>
+</tr>
+<tr>
+<td>问答对（QA）</td>
+<td>SFT、评测</td>
+<td>工单沉淀、FAQ</td>
+</tr>
+<tr>
+<td>对话/指令</td>
+<td>行为与格式微调</td>
+<td>客服记录、人工撰写</td>
+</tr>
+<tr>
+<td>工具/结构化样本</td>
+<td>工具调用、表格理解</td>
+<td>API 文档、数据库导出</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>领域建模的第一步不是写代码，而是<strong>画“知识地图”</strong>：这个领域有哪些主题、每个主题有什么知识/格式/行为要求、现有数据覆盖了多少——缺什么补什么，而不是有什么用什么。</p>
+</blockquote>
+<hr />
+<h2 id="04">04 技术选型：解析、合成与质量校验怎么配</h2>
+<h3 id="41">4.1 文档解析方案</h3>
+<table>
+<thead>
+<tr>
+<th>方案</th>
+<th>适合</th>
+<th>注意</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>结构化导出（DB/API/JSON）</td>
+<td>内部系统数据</td>
+<td>最佳起点，直接拿规范格式</td>
+</tr>
+<tr>
+<td>文本抽取（PDF/Word→文本）</td>
+<td>文档资料</td>
+<td>OCR 错误、页眉页脚噪音（unstructured 类工具可参考）</td>
+</tr>
+<tr>
+<td>规则解析（按标题/编号切块）</td>
+<td>有固定格式的手册</td>
+<td>本章实操采用，零依赖可复现</td>
+</tr>
+</tbody>
+</table>
+<h3 id="42">4.2 合成数据方案</h3>
+<table>
+<thead>
+<tr>
+<th>方案</th>
+<th>做法</th>
+<th>优点</th>
+<th>风险</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>模板合成（本章实操）</td>
+<td>规则×问题模板</td>
+<td>可控、零幻觉、可复现</td>
+<td>句式单一</td>
+</tr>
+<tr>
+<td>LLM 改写/扩写</td>
+<td>用强模型改写模板问答</td>
+<td>多样性高</td>
+<td>可能改错事实</td>
+</tr>
+<tr>
+<td>LLM 提问生成（QAG）</td>
+<td>基于文档生成问题+答案</td>
+<td>覆盖广</td>
+<td>答案可能脱离原文</td>
+</tr>
+<tr>
+<td>推理链/负样本合成</td>
+<td>生成思考过程/错误示例</td>
+<td>提升推理与拒答</td>
+<td>难度高、需专家审</td>
+</tr>
+</tbody>
+</table>
+<h3 id="43">4.3 合成数据防幻觉三件套</h3>
+<ol>
+<li><strong>锚定原文</strong>：LLM 生成时必须给定原文片段，并强制“只依据原文回答”；</li>
+<li><strong>自动校验</strong>：答案关键实体/数值必须在原文中出现（用规则或再次让 LLM 打分）；</li>
+<li><strong>专家抽检</strong>：按主题分层抽 10%–20% 人工复核，错误率超标就回炉。</li>
+</ol>
+<blockquote>
+<p>模板合成负责“结构正确”，LLM 合成负责“表达多样”，专家校验负责“事实正确”——三者缺一不可。</p>
+</blockquote>
+<h2 id="05-40">05 分步实操：从领域文档到问答语料（40 分钟）</h2>
+<p>继续沿用 llm-demo。领域数据构建独立成 domain 子工程：llm-demo/domain（源文档）+ llm-demo/domain_out（产物）。第 11 章增量预训练、第 15 章 SFT 都会消费这里的产物。</p>
+<h3 id="step-1-10">Step 1 建目录并写一份“领域知识库”样例（10 分钟）</h3>
+<pre><code class="language-bash">cd llm-demo
+mkdir -p domain/domain_sources domain/domain_out scripts
+</code></pre>
+<p>保存 scripts/make_domain_source.py：</p>
+<pre><code class="language-python"># scripts/make_domain_source.py —— 生成领域知识库样例文档
+import pathlib
+
+root = pathlib.Path(__file__).resolve().parent.parent
+out_dir = root / &quot;domain&quot; / &quot;domain_sources&quot;
+out_dir.mkdir(parents=True, exist_ok=True)
+
+lines = [
+    &quot;# IT 帮助台知识库 V2&quot;,
+    &quot;&quot;,
+    &quot;## R001 打印机连不上&quot;,
+    &quot;正文：先检查打印机电源与网络指示灯；重启打印机；删除并重新添加 HP LaserJet M405；仍失败请提交工单，注明打印机 IP 与错误码。&quot;,
+    &quot;&quot;,
+    &quot;## R002 WiFi 无法上网&quot;,
+    &quot;正文：确认连接 Corp-WiFi；忘记网络后重新输入域账号；仍无法上网请换网口测试或联系 IT。&quot;,
+    &quot;&quot;,
+    &quot;## R003 VPN 账号锁定&quot;,
+    &quot;正文：账号连续输错 5 次会锁定 30 分钟；紧急解锁请联系 IT 热线；首次使用需先提交 VPN 权限申请。&quot;,
+    &quot;&quot;,
+    &quot;## R004 邮箱容量超限&quot;,
+    &quot;正文：清理大附件与已删除邮件；容量超过 90% 请先自行清理，仍超限再提交扩容工单。&quot;,
+]
+
+out_path = out_dir / &quot;helpdesk_manual_v2.txt&quot;
+out_path.write_text(&quot;\n&quot;.join(lines) + &quot;\n&quot;, encoding=&quot;utf-8&quot;)
+print(&quot;written:&quot;, out_path)
+</code></pre>
+<p>运行并查看：</p>
+<pre><code class="language-bash">python scripts/make_domain_source.py
+cat domain/domain_sources/helpdesk_manual_v2.txt
+</code></pre>
+<blockquote>
+<p>真实场景中，这份 txt 可能是导出的 Confluence 知识库、Word 手册或 PDF 转换结果；规则编号与标题结构越规范，解析越省力。</p>
+</blockquote>
+<h3 id="step-2-10">Step 2 解析成结构化领域语料（10 分钟）</h3>
+<p>保存 scripts/build_domain_corpus.py：</p>
+<pre><code class="language-python"># scripts/build_domain_corpus.py —— 按规则编号解析知识库文档 -&gt; domain corpus
+import hashlib
+import json
+import pathlib
+import re
+
+root = pathlib.Path(__file__).resolve().parent.parent
+src_path = root / &quot;domain&quot; / &quot;domain_sources&quot; / &quot;helpdesk_manual_v2.txt&quot;
+out_dir = root / &quot;domain&quot; / &quot;domain_out&quot;
+out_dir.mkdir(parents=True, exist_ok=True)
+
+text = src_path.read_text(encoding=&quot;utf-8&quot;)
+records = []
+current = None
+for raw in text.splitlines():
+    line = raw.strip()
+    m = re.match(r&quot;^##\s+(R\d+)\s+(.+)$&quot;, line)
+    if m:
+        if current is not None:
+            records.append(current)
+        current = {&quot;rule_id&quot;: m.group(1), &quot;title&quot;: m.group(2), &quot;body&quot;: []}
+    elif current is not None and line:
+        current[&quot;body&quot;].append(line)
+
+if current is not None:
+    records.append(current)
+
+corpus = []
+for rec in records:
+    body = &quot; &quot;.join(rec[&quot;body&quot;])
+    body = re.sub(r&quot;^正文[:：]\s*&quot;, &quot;&quot;, body)
+    full_text = rec[&quot;title&quot;] + &quot;。&quot; + body
+    doc_id = hashlib.sha256(full_text.encode(&quot;utf-8&quot;)).hexdigest()[:16]
+    corpus.append({
+        &quot;doc_id&quot;: doc_id,
+        &quot;rule_id&quot;: rec[&quot;rule_id&quot;],
+        &quot;title&quot;: rec[&quot;title&quot;],
+        &quot;text&quot;: full_text,
+        &quot;source&quot;: &quot;helpdesk_manual_v2&quot;,
+        &quot;source_version&quot;: &quot;v2&quot;,
+        &quot;tags&quot;: [&quot;it_helpdesk&quot;],
+        &quot;kind&quot;: &quot;rule_doc&quot;,
+    })
+
+out_path = out_dir / &quot;domain_corpus.jsonl&quot;
+with open(out_path, &quot;w&quot;, encoding=&quot;utf-8&quot;) as f:
+    for item in corpus:
+        f.write(json.dumps(item, ensure_ascii=False) + &quot;\n&quot;)
+print(&quot;rules parsed:&quot;, len(corpus), &quot;-&gt;&quot;, out_path)
+</code></pre>
+<p>运行：</p>
+<pre><code class="language-bash">python scripts/build_domain_corpus.py
+cat domain/domain_out/domain_corpus.jsonl
+</code></pre>
+<p>产出物：每条规则一条结构化记录（doc_id/rule_id/title/text/source_version/tags）——这就是第 11 章 CPT 语料与后续 RAG 知识源的最小单元。</p>
+<h3 id="step-3-10">Step 3 模板合成领域问答对（10 分钟）</h3>
+<p>保存 scripts/synthesize_domain_qa.py：</p>
+<pre><code class="language-python"># scripts/synthesize_domain_qa.py —— 规则 x 问题模板 -&gt; 合成 SFT 问答对
+import json
+import pathlib
+import random
+
+root = pathlib.Path(__file__).resolve().parent.parent
+corpus_path = root / &quot;domain&quot; / &quot;domain_out&quot; / &quot;domain_corpus.jsonl&quot;
+out_path = root / &quot;domain&quot; / &quot;domain_out&quot; / &quot;domain_qa.jsonl&quot;
+
+records = [json.loads(line) for line in open(corpus_path, encoding=&quot;utf-8&quot;)]
+
+templates = [
+    &quot;{title}怎么办？&quot;,
+    &quot;帮我处理一下：{title}&quot;,
+    &quot;{title}，具体步骤是什么？&quot;,
+    &quot;按公司规定，{title}应该怎么处理？&quot;,
+    &quot;遇到{title}，第一步该做什么？&quot;,
+]
+
+random.seed(2026)  # 固定种子，保证可复现
+rows = []
+for rec in records:
+    answer = rec[&quot;text&quot;]
+    for tpl in templates:
+        question = tpl.format(title=rec[&quot;title&quot;])
+        rows.append({
+            &quot;instruction&quot;: &quot;你是公司 IT 帮助台助手，请严格按公司知识库回答，不要编造。&quot;,
+            &quot;input&quot;: question,
+            &quot;output&quot;: answer,
+        })
+
+random.shuffle(rows)
+with open(out_path, &quot;w&quot;, encoding=&quot;utf-8&quot;) as f:
+    for row in rows:
+        f.write(json.dumps(row, ensure_ascii=False) + &quot;\n&quot;)
+print(&quot;synthetic QA:&quot;, len(rows), &quot;-&gt;&quot;, out_path)
+</code></pre>
+<h3 id="step-4-10">Step 4 质检与打版本（10 分钟）</h3>
+<pre><code class="language-bash">python scripts/synthesize_domain_qa.py
+wc -l domain/domain_out/domain_qa.jsonl
+head -n 2 domain/domain_out/domain_qa.jsonl
+</code></pre>
+<p><strong>质检动作（不可跳过）</strong>：</p>
+<ol>
+<li>抽 20 条看：问题是否通顺、答案是否与规则原文一致、有没有出现规则里没有的信息；</li>
+<li>交叉验证：随机抽 5 条，把答案里的关键实体（HP LaserJet M405、Corp-WiFi、30 分钟）与源文档核对；</li>
+<li>记录质检结论到 domain/domain_out/qa_qc_report.md（通过/问题清单），再打版本：</li>
+</ol>
+<pre><code class="language-bash">cd llm-demo
+git add domain scripts
+git commit -m &quot;domain: helpdesk manual v2 -&gt; corpus v1 + synthetic QA v1 (templates x4 rules)&quot;
+git tag data-domain-v0.1
+</code></pre>
+<blockquote>
+<p>模板合成只有 4 条规则 × 5 个模板 = 20 条，量虽小但结构完整。真实项目把规则扩到几百条、模板扩到几十个，再叠加 LLM 改写增加多样性，就能到万级规模。</p>
+</blockquote>
+<h3 id="step-5-09-5">Step 5 接入统一打分（衔接第 09 章，5 分钟）</h3>
+<p>把领域问答对也跑一遍质量信号（可直接复用第 09 章 score_sources.py 的特征函数，或写一个轻量版），并给每条打上 domain 标签。这样第 11 章配比时，通用语料与领域语料用的是同一把“尺子”。</p>
+<h2 id="06">06 参数详解：领域数据构建速查</h2>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>参考取值</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>领域占比（CPT 混合）</td>
+<td>5%–30% 起步</td>
+<td>从低到高做消融；过高会伤通用能力（第 11 章展开）</td>
+</tr>
+<tr>
+<td>真实:合成比例</td>
+<td>建议 ≥1:1，真实优先</td>
+<td>合成只补量，不补“事实最新性”</td>
+</tr>
+<tr>
+<td>模板数量</td>
+<td>每规则 5–20 个</td>
+<td>太少句式单一，太多维护成本高</td>
+</tr>
+<tr>
+<td>LLM 合成 temperature</td>
+<td>0.3–0.7</td>
+<td>改写多样性用 0.7，事实生成用 0.3</td>
+</tr>
+<tr>
+<td>校验覆盖率</td>
+<td>实体 100% + 人工 10%–20%</td>
+<td>关键实体自动核对，全文人工抽检</td>
+</tr>
+<tr>
+<td>领域词密度</td>
+<td>建模用，不硬设阈值</td>
+<td>作为领域信号进第 09 章打分</td>
+</tr>
+<tr>
+<td>解析容错</td>
+<td>解析失败率 &lt;1%</td>
+<td>高于 1% 先修解析器，不要手工补数据</td>
+</tr>
+<tr>
+<td>评测隔离</td>
+<td>领域评测集与训练/合成源严格去重</td>
+<td>复用第 07 章 MinHash 对评测集做防污染</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="07">07 高频踩坑排查</h2>
+<p><strong>坑 1：领域数据太少就硬训</strong>
+症状：只有 200 条领域问答就做 CPT/SFT，模型把 200 条背下来，泛化全无。
+解法：先画知识地图，按主题补数据；不够就用模板+LLM 合成扩量，但合成比例别超过真实数据。</p>
+<p><strong>坑 2：合成数据“一本正经地胡说”</strong>
+症状：LLM 生成的问答里出现不存在的型号、流程、政策。
+解法：锚定原文生成 + 实体自动校验 + 专家抽检三件套；高危领域（医疗/法律/财务）合成数据必须领域专家逐条审。</p>
+<p><strong>坑 3：OCR/格式解析错误直接进训练</strong>
+症状：PDF 转文本后表格错位、页眉混入正文，模型学到“页眉页脚话术”。
+解法：解析后先跑“格式体检”（异常短行率、页眉页脚模式、乱码率），不合格回炉解析器。</p>
+<p><strong>坑 4：专家不参与，数据“看起来对”</strong>
+症状：AI 团队自己判断领域答案对不对，错的知识一路进模型。
+解法：每个主题至少一名领域专家参与抽样评审；QA 评审结论进 manifest，作为数据版本的一部分。</p>
+<p><strong>坑 5：真实与合成混在一起不分来源</strong>
+症状：合成数据出问题后，无法定位是哪批数据带偏的。
+解法：每条数据带 source/synthetic=true|false/生成器版本；分析与回滚都按来源切分。</p>
+<p><strong>坑 6：只建训练集，不建领域评测集</strong>
+症状：模型训完不知道领域能力到底涨没涨。
+解法：从真实业务场景抽 200–500 条做领域评测集（与训练源严格去重），CPT/SFT 前后都跑（第 20 章评估体系）。</p>
+<p><strong>坑 7：领域数据“一次建完不再更新”</strong>
+症状：三个月后业务规则变了，模型还在答旧流程。
+解法：知识库版本化 + 增量更新管道：文档变更触发“解析→合成→校验→重新训练/检索库更新”的流程（第 11/44 章衔接）。</p>
+<hr />
+<h2 id="08">08 进阶优化：领域数据构建的进化方向</h2>
+<p><strong>① LLM 合成 + 自动事实校验流水线</strong>：文档切块 → LLM 按原文生成 QA/指令 → 实体与数值自动比对原文 → 不合格自动重试/丢弃 → 专家抽检。把“合成-校验”做成可回放管道，而不是一次性脚本。</p>
+<p><strong>② 主动学习回流</strong>：线上模型答错/用户纠正的案例，经过脱敏与专家确认后回流领域语料——真实业务是最好的数据矿，但要建立“采集→清洗→评审→入库”闭环。</p>
+<p><strong>③ 多领域配比实验</strong>：做领域模型前先跑“领域 A:B:通用”配比矩阵小实验（1B 模型上消融），用领域评测分选配比，再放大到目标模型。</p>
+<p><strong>④ 合成数据多样化</strong>：模板负责骨架、LLM 负责改写、负样本负责拒答边界（“不知道就说不知道”），三类合成按任务需求组合，避免同质化。</p>
+<p><strong>⑤ 数据资产化</strong>：领域数据按“知识库版本 + 派生数据集 + 评测集”三级管理，每条数据带来源与血缘；当模型效果回退时，能快速定位是知识过期、解析错误还是合成污染。</p>
+<hr />
+<h2 id="09-top3">09 本章核心总结（TOP3）</h2>
+<p><strong>TOP1</strong>：领域数据三路来源——内部真实（最高价值）、外部公开（补广度）、合成数据（补数量）；真实为主、合成为辅，每条数据带来源标签。</p>
+<p><strong>TOP2</strong>：合成数据防幻觉三件套——锚定原文、实体自动校验、专家抽检；模板合成保结构，LLM 合成增多样，校验决定能不能用。</p>
+<p><strong>TOP3</strong>：先画领域知识地图再动手：缺什么补什么；训练集与评测集严格隔离；领域数据要版本化、可更新、可回滚——它和模型一样是需要持续运维的资产。</p>
+<hr />
+<h2 id="10">10 连载衔接</h2>
+<p>上一章（第 09 章）给通用语料装上了质量分；本章建好了领域弹药库——helpdesk 规则语料 + 合成问答对，带着版本与质检报告躺在 domain_out 里。</p>
+<p>下一章把它们真正“练进”模型：【第 11 章】增量预训练方案：领域适配、学习率与灾难遗忘。你会看到领域数据与通用数据怎么配比、怎么防止模型“学了领域忘了通用”。</p>
+<hr />
+<h2 id="11">11 话题标签与系列目录索引</h2>
+<p>话题标签：<strong>#LLM全栈工程 #领域数据 #合成数据 #数据构建 #行业大模型 #工程实战</strong>（Voice前沿 出品，欢迎收藏追更）</p>
+<p><strong>系列目录（46 章，随连载持续更新）</strong></p>
+<p>第 0 阶段·开篇引路
+- 01 一条大模型生产线全程发生了什么
+- 02 2 小时跑通最小闭环
+- 03 预训练到底在练什么</p>
+<p>第 1 阶段·预训练工程·数据核心层
+- 04 数据管道从零构建
+- 05 数据清洗规范与脏数据剔除
+- 06 文本过滤实战
+- 07 数据去重算法
+- 08 敏感数据脱敏
+- 09 数据质量打分体系
+- 10 领域专属数据构建（本篇）
+- 11 增量预训练方案
+- 12 预训练超参选型与硬件适配
+- 13 断点续训、收敛判断与失败排查</p>
+<p>第 2 阶段·微调与对齐体系
+- 14 全维度微调技术拆解
+- 15 SFT 监督微调实战
+- 16 SFT 数据集构建与标注规范
+- 17 微调模板设计
+- 18 微调超参调优策略
+- 19 过拟合、欠拟合与灾难遗忘
+- 20 微调效果评估体系
+- 21 多轮对话微调专项
+- 22 模型蒸馏实战
+- 23 奖励模型训练
+- 24 RLHF/PPO 工程落地
+- 25 RLAIF：AI 反馈自动对齐
+- 26 小样本与领域自适应微调</p>
+<p>第 3 阶段·基础部署与推理优化
+- 27 部署框架横向对比
+- 28 vLLM 部署实战与参数调优
+- 29 SGLang 高性能推理落地
+- 30 TensorRT-LLM 固化与加速
+- 31 模型量化实操
+- 32 模型剪枝与蒸馏压缩
+- 33 KV Cache 优化与上下文窗口拓展
+- 34 流式推理封装与高并发服务化</p>
+<p>第 4 阶段·高阶推理编译器极致优化
+- 35 推理编译器核心原理
+- 36 算子融合与计算图编译
+- 37 动态 shape 与显存编译器优化
+- 38 Speculative Decoding 投机推理进阶
+- 39 批量调度与并行深度适配
+- 40 内核重构与编译级量化</p>
+<p>第 5 阶段·全栈工程联调与项目落地
+- 41 全链路串联：数据到上线一体化流程
+- 42 领域大模型定制化落地
+- 43 高并发生产适配与端侧部署
+- 44 模型迭代升级与性能对标评测
+- 45 线上问题闭环排查
+- 46 工程化最佳实践汇总（手册终章）</p>
+<hr />
+<p><em>本文由 Voice前沿 出品 · 转载注明出处 · 下一篇：第 11 章 增量预训练方案</em></p>
+</article>
+<nav class="prevnext"><a href="ch09.html">← 第 09 章 【LLM全栈工程·第09章】数据质量打分体系：规则、分类器与多维度融合</a><a href="ch11.html" style="text-align:right">第 11 章 【LLM全栈工程·第11章】增量预训练方案：领域适配、学习率与灾难遗忘 →</a></nav>
+</main>
+<footer class="wrap"><p>LLM 全栈工程 · Voice前沿 出品 · 46 章连载 · 收藏即手册</p></footer>
+</body>
+</html>

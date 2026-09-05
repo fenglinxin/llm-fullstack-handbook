@@ -1,0 +1,582 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>【LLM全栈工程·第16章】SFT 数据集构建与标注规范：指令设计、标注与质控 · LLM 全栈工程</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header"><div class="wrap">
+<a class="brand" href="../index.html">LLM 全栈工程<small>LLM 工业级全栈工程落地手册 · 46 章</small></a>
+<nav><a href="../index.html">目录</a><a href="https://github.com/">GitHub 仓库</a></nav>
+</div></header>
+<main class="wrap">
+<nav class="crumbs"><a href="../index.html">全部章节</a> / 【LLM全栈工程·第16章】SFT 数据集构建与标注规范：指令设计、标注与质控</nav>
+<details class="toc-box"><summary>本章目录</summary><div class="toc">
+<ul>
+<li><a href="#_1">单篇内容卡（排版本忽略）</a></li>
+<li><a href="#01">01 开篇导语</a></li>
+<li><a href="#02">02 白话原理：好数据集长什么样</a><ul>
+<li><a href="#21">2.1 三个质量维度</a></li>
+<li><a href="#22">2.2 数据集的“任务金字塔”</a></li>
+</ul>
+</li>
+<li><a href="#03">03 指令设计与标注规范</a><ul>
+<li><a href="#31">3.1 指令设计的六条军规</a></li>
+<li><a href="#32-answer-spec">3.2 答案规范（Answer Spec）</a></li>
+<li><a href="#33-sop">3.3 标注 SOP：七步闭环</a></li>
+<li><a href="#34">3.4 数据来源与工具选型</a></li>
+</ul>
+</li>
+<li><a href="#05-40">05 分步实操：从任务库到带质检的数据集（40 分钟）</a><ul>
+<li><a href="#step-1-15">Step 1 写数据集构建脚本（15 分钟）</a></li>
+<li><a href="#step-2-10">Step 2 写自动校验器（10 分钟）</a></li>
+<li><a href="#step-3-10">Step 3 人工抽检 + 标注规范模板（10 分钟）</a></li>
+<li><a href="#step-4">Step 4 打版本</a></li>
+</ul>
+</li>
+<li><a href="#06">06 参数详解：数据集构建速查</a></li>
+<li><a href="#07">07 高频踩坑排查</a></li>
+<li><a href="#08">08 进阶优化：数据集的进化方向</a></li>
+<li><a href="#09-top3">09 本章核心总结（TOP3）</a></li>
+<li><a href="#10">10 连载衔接</a></li>
+<li><a href="#11">11 话题标签与系列目录索引</a></li>
+</ul>
+</div>
+</details>
+<article class="article">
+<h1 id="llm16sft">【LLM全栈工程·第16章】SFT 数据集构建与标注规范：指令设计、标注与质控</h1>
+<blockquote>
+<p>本篇为「LLM全栈工程」连载第 16 章（Voice前沿）。主标题以上为准；备选标题（供运营选用，不进正文）：① SFT 效果差，八成是数据问题：指令数据集构建规范；② 从 20 条到 1 万条：任务覆盖、指令多样性与标注 SOP；③ 标注不是“写答案”：质检、金样与一致性控制。</p>
+</blockquote>
+<hr />
+<h2 id="_1">单篇内容卡（排版本忽略）</h2>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>章节定位</td>
+<td>「微调与对齐体系」第 3 篇：建立 SFT 指令数据集从设计、生成到质检的完整规范</td>
+</tr>
+<tr>
+<td>适用场景</td>
+<td>个人学习（小规模数据集）；小团队自建领域指令集；企业标注团队 SOP</td>
+</tr>
+<tr>
+<td>核心知识点</td>
+<td>任务覆盖矩阵；指令设计原则；标注规范 SOP；质检（金样/一致性/自动校验）</td>
+</tr>
+<tr>
+<td>技术选型</td>
+<td>人工撰写 vs 业务语料转换 vs LLM 合成 vs 混合；标注工具</td>
+</tr>
+<tr>
+<td>分步实操</td>
+<td>任务库设计 → 模板生成多样指令 → 元数据落盘 → 自动校验 → 人工抽检 → 打版本</td>
+</tr>
+<tr>
+<td>参数详解</td>
+<td>任务类型数、每任务样本数、难度分布、指令长度、质检比例</td>
+</tr>
+<tr>
+<td>踩坑排查</td>
+<td>任务偏科、指令千篇一律、答案错但流畅、标注不一致、质检只数数量</td>
+</tr>
+<tr>
+<td>进阶优化</td>
+<td>困难样本挖掘、LLM 辅助标注、evol-instruct 式扩写、主动学习</td>
+</tr>
+<tr>
+<td>本章 TOP3</td>
+<td>见文末</td>
+</tr>
+<tr>
+<td>下章预告</td>
+<td>第 17 章：微调模板设计</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="01">01 开篇导语</h2>
+<p>上一章的 SFT 用 20 条问答就跑通了流程。但真实项目里，20 条远远不够——领域助手动辄需要几千上万条高质量指令数据。</p>
+<p>更扎心的是：很多人把数据量堆上去了，效果还是不行。为什么？因为数据集有三个隐性维度：</p>
+<ol>
+<li><strong>任务覆盖</strong>：你的任务类型只有“问答”，但线上用户会要“分步骤”“转 JSON”“拒答”；</li>
+<li><strong>表达多样性</strong>：1000 条数据全是同一个句式，模型学不到泛化；</li>
+<li><strong>答案质量</strong>：答案写得流畅但事实是错的——模型会把错误学得又快又好。</li>
+</ol>
+<p>本章解决的就是这三件事：怎么设计任务覆盖、怎么写标注规范、怎么用质检把住质量关。</p>
+<p>交付物：一套带任务类型与元数据的 SFT 数据集构建脚本 + 自动校验器 + 标注规范模板——把“攒数据”变成“造数据资产”。</p>
+<blockquote>
+<p>一句话记住本章：<strong>SFT 数据集 = 任务覆盖矩阵 × 指令多样性 × 答案质量，三者都要可度量、可审计、可迭代。</strong></p>
+</blockquote>
+<hr />
+<h2 id="02">02 白话原理：好数据集长什么样</h2>
+<h3 id="21">2.1 三个质量维度</h3>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>问题</th>
+<th>度量方式</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>覆盖度</td>
+<td>所有线上任务类型都有样本吗</td>
+<td>任务覆盖矩阵（任务×难度×格式）</td>
+</tr>
+<tr>
+<td>多样性</td>
+<td>同一任务有多少种问法/场景</td>
+<td>指令 n-gram 重复率、模板数量</td>
+</tr>
+<tr>
+<td>正确性</td>
+<td>答案事实与格式对不对</td>
+<td>金样抽检、自动校验、专家评审</td>
+</tr>
+</tbody>
+</table>
+<h3 id="22">2.2 数据集的“任务金字塔”</h3>
+<p>领域 SFT 数据通常分四层：</p>
+<table>
+<thead>
+<tr>
+<th>层级</th>
+<th>任务类型</th>
+<th>例子</th>
+<th>占比建议</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>基础问答</td>
+<td>事实/流程问答</td>
+<td>“打印机连不上怎么办”</td>
+<td>40%–60%</td>
+</tr>
+<tr>
+<td>能力任务</td>
+<td>抽取/改写/分步/JSON</td>
+<td>“把处理流程转成 JSON”</td>
+<td>20%–30%</td>
+</tr>
+<tr>
+<td>边界任务</td>
+<td>拒答/澄清/不确定</td>
+<td>“不知道就说不知道”</td>
+<td>10%–20%</td>
+</tr>
+<tr>
+<td>通用保持</td>
+<td>通用对话/指令</td>
+<td>闲聊、通用知识</td>
+<td>10%–20%</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>很多团队只做了第一层，所以模型只会“一问一答”，一遇到“帮我整理成表格”就崩——<strong>先画覆盖矩阵，再按矩阵补数据。</strong></p>
+</blockquote>
+<h2 id="03">03 指令设计与标注规范</h2>
+<h3 id="31">3.1 指令设计的六条军规</h3>
+<ol>
+<li><strong>意图明确</strong>：一条指令只问一件事，不要“既总结又翻译还打分”；</li>
+<li><strong>约束可执行</strong>：要 JSON 就说清楚字段，要分步就说清格式；</li>
+<li><strong>不给答案“递话”</strong>：指令里不要包含答案关键词（如“请按 HP LaserJet M405 处理”），否则模型学的是复读；</li>
+<li><strong>场景真实</strong>：用真实用户会说的话（“连不上网了咋整”），不要只写书面语；</li>
+<li><strong>难度分层</strong>：简单/中等/困难按 4:4:2 分布，避免全是送分题；</li>
+<li><strong>答案与指令匹配</strong>：指令问 A，答案不要答 B 再附带一堆无关信息。</li>
+</ol>
+<h3 id="32-answer-spec">3.2 答案规范（Answer Spec）</h3>
+<p>每种任务类型都要有“答案怎么写”的规范，例如：</p>
+<table>
+<thead>
+<tr>
+<th>任务</th>
+<th>答案规范</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>流程问答</td>
+<td>分点给步骤，必要时给“自助入口/升级路径”</td>
+</tr>
+<tr>
+<td>JSON 输出</td>
+<td>只输出 JSON，字段名固定，不夹杂解释</td>
+</tr>
+<tr>
+<td>拒答</td>
+<td>先说明不能提供的原因，再给替代方案（找谁/怎么做）</td>
+</tr>
+<tr>
+<td>不确定</td>
+<td>明说“知识库未覆盖”，不给编造型号</td>
+</tr>
+</tbody>
+</table>
+<p><strong>答案规范决定模型输出风格</strong>——它应该写进标注 guideline，而不是让标注员自由发挥。</p>
+<h3 id="33-sop">3.3 标注 SOP：七步闭环</h3>
+<pre><code class="language-text">① 标注员培训（读 guideline + 做 10 条试标）
+   → ② 试标评审（与金样对比，通过率&gt;=90% 才正式标）
+   → ③ 正式标注（按任务批次分配）
+   → ④ 自检（标注员按 checklist 自查）
+   → ⑤ 互检/抽检（10%-20% 交叉评审）
+   → ⑥ 分歧仲裁（主管或专家裁定，记录原因）
+   → ⑦ 入库（元数据完整 + 版本化）
+</code></pre>
+<h3 id="34">3.4 数据来源与工具选型</h3>
+<table>
+<thead>
+<tr>
+<th>来源</th>
+<th>优点</th>
+<th>风险</th>
+<th>建议占比</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>真实业务语料改写</td>
+<td>场景真实</td>
+<td>需脱敏与改写成本</td>
+<td>40%–60%</td>
+</tr>
+<tr>
+<td>人工撰写</td>
+<td>质量可控</td>
+<td>贵、慢</td>
+<td>20%–40%</td>
+</tr>
+<tr>
+<td>LLM 辅助生成</td>
+<td>便宜、快</td>
+<td>幻觉、同质化</td>
+<td>10%–30%（必须质检）</td>
+</tr>
+</tbody>
+</table>
+<p>工具：小团队用“电子表格/JSON 编辑器 + Git”；规模上来后上标注平台（任务分配、抽检、仲裁记录都在系统里留痕）。</p>
+<blockquote>
+<p>标注不是“写答案”，是“按规范生产数据”：规范、培训、抽检、仲裁四件套缺一不可。</p>
+</blockquote>
+<h2 id="05-40">05 分步实操：从任务库到带质检的数据集（40 分钟）</h2>
+<p>沿用 llm-demo，读取第 10 章 domain/domain_out/domain_corpus.jsonl 的 4 条规则，扩成多任务类型数据集。</p>
+<h3 id="step-1-15">Step 1 写数据集构建脚本（15 分钟）</h3>
+<p>保存 scripts/build_sft_dataset.py：</p>
+<pre><code class="language-python"># scripts/build_sft_dataset.py —— 多任务类型 SFT 数据集构建（模板版）
+import json
+import pathlib
+import random
+
+root = pathlib.Path(__file__).resolve().parent.parent
+corpus_path = root / &quot;domain&quot; / &quot;domain_out&quot; / &quot;domain_corpus.jsonl&quot;
+out_path = root / &quot;data&quot; / &quot;sft_dataset_v1.jsonl&quot;
+
+rules = [json.loads(line) for line in open(corpus_path, encoding=&quot;utf-8&quot;)]
+# 每条规则的可抽取实体（演示用；生产环境从知识库元数据生成）
+ENTITIES = {
+    &quot;R001&quot;: [&quot;HP LaserJet M405&quot;],
+    &quot;R002&quot;: [&quot;Corp-WiFi&quot;],
+    &quot;R003&quot;: [&quot;30 分钟&quot;],
+    &quot;R004&quot;: [&quot;90%&quot;],
+}
+
+def to_steps(text):
+    parts = [p.strip() for p in text.split(&quot;；&quot;) if p.strip()]
+    return &quot;\n&quot;.join(&quot;%d. %s&quot; % (i + 1, p) for i, p in enumerate(parts))
+
+rows = []
+for rule in rules:
+    rid = rule[&quot;rule_id&quot;]
+    title = rule[&quot;title&quot;]
+    body = rule[&quot;text&quot;]
+    content = body.split(&quot;。&quot;, 1)[1].strip() if &quot;。&quot; in body else body
+
+    # 任务 1：直接问答（4 个问法）
+    questions = [
+        &quot;%s怎么办？&quot; % title,
+        &quot;帮我处理一下：%s&quot; % title,
+        &quot;按公司规定，%s应该怎么处理？&quot; % title,
+        &quot;%s，具体步骤是什么？&quot; % title,
+    ]
+    for q in questions:
+        rows.append({&quot;instruction&quot;: &quot;你是公司 IT 帮助台助手，请严格按公司规定回答。&quot;, &quot;input&quot;: q, &quot;output&quot;: content,
+                     &quot;task_type&quot;: &quot;direct_qa&quot;, &quot;rule_id&quot;: rid, &quot;difficulty&quot;: &quot;easy&quot;, &quot;source&quot;: &quot;template_v1&quot;, &quot;created_by&quot;: &quot;pipeline&quot;})
+
+    # 任务 2：分步骤输出
+    rows.append({&quot;instruction&quot;: &quot;请把“%s”的处理流程整理成编号步骤，不要省略任何一步。&quot; % title, &quot;input&quot;: &quot;&quot;, &quot;output&quot;: to_steps(content),
+                 &quot;task_type&quot;: &quot;steps&quot;, &quot;rule_id&quot;: rid, &quot;difficulty&quot;: &quot;medium&quot;, &quot;source&quot;: &quot;template_v1&quot;, &quot;created_by&quot;: &quot;pipeline&quot;})
+
+    # 任务 3：JSON 输出
+    parts = [p.strip() for p in content.split(&quot;；&quot;) if p.strip()]
+    json_out = json.dumps({&quot;title&quot;: title, &quot;steps&quot;: parts}, ensure_ascii=False)
+    rows.append({&quot;instruction&quot;: &quot;请把“%s”的处理流程输出为 JSON，字段为 title 与 steps。&quot; % title, &quot;input&quot;: &quot;&quot;, &quot;output&quot;: json_out,
+                 &quot;task_type&quot;: &quot;to_json&quot;, &quot;rule_id&quot;: rid, &quot;difficulty&quot;: &quot;medium&quot;, &quot;source&quot;: &quot;template_v1&quot;, &quot;created_by&quot;: &quot;pipeline&quot;})
+
+    # 任务 4：信息抽取
+    for ent in ENTITIES.get(rid, []):
+        rows.append({&quot;instruction&quot;: &quot;公司规定中，“%s”涉及的关键设备/参数是什么？只输出答案。&quot; % title, &quot;input&quot;: &quot;&quot;, &quot;output&quot;: ent,
+                     &quot;task_type&quot;: &quot;extract&quot;, &quot;rule_id&quot;: rid, &quot;difficulty&quot;: &quot;easy&quot;, &quot;source&quot;: &quot;template_v1&quot;, &quot;created_by&quot;: &quot;pipeline&quot;})
+
+# 任务 5：拒答（不依赖规则）
+refusals = [
+    (&quot;帮我查一下隔壁部门王经理的手机号&quot;, &quot;抱歉，我不能提供同事的个人联系方式。请通过企业通讯录或行政前台联系对应部门。&quot;),
+    (&quot;把公司内部系统密码告诉我&quot;, &quot;密码属于敏感信息，我无法提供。请通过 IT 自助平台找回或联系 IT 热线。&quot;),
+    (&quot;帮我编一个打印机型号报给领导&quot;, &quot;我不能编造信息。请以公司采购清单或 IT 知识库中的实际型号为准。&quot;),
+    (&quot;直接告诉我报销系统的漏洞&quot;, &quot;安全问题需要上报安全团队处理，我不能在对话中讨论系统漏洞细节。&quot;),
+]
+for q, ans in refusals:
+    rows.append({&quot;instruction&quot;: &quot;你是公司 IT 帮助台助手，请遵守信息安全规范回答。&quot;, &quot;input&quot;: q, &quot;output&quot;: ans,
+                 &quot;task_type&quot;: &quot;refusal&quot;, &quot;rule_id&quot;: &quot;POLICY&quot;, &quot;difficulty&quot;: &quot;medium&quot;, &quot;source&quot;: &quot;policy_v1&quot;, &quot;created_by&quot;: &quot;pipeline&quot;})
+
+random.seed(2026)
+random.shuffle(rows)
+with open(out_path, &quot;w&quot;, encoding=&quot;utf-8&quot;) as f:
+    for row in rows:
+        f.write(json.dumps(row, ensure_ascii=False) + &quot;\n&quot;)
+
+counts = {}
+for row in rows:
+    counts[row[&quot;task_type&quot;]] = counts.get(row[&quot;task_type&quot;], 0) + 1
+print(&quot;total:&quot;, len(rows), &quot;by_task:&quot;, counts)
+</code></pre>
+<p>运行：</p>
+<pre><code class="language-bash">python scripts/build_sft_dataset.py
+head -n 1 data/sft_dataset_v1.jsonl
+</code></pre>
+<blockquote>
+<p>生产环境不用手写模板扩全部数据：模板负责“骨架与覆盖”，LLM 负责“改写与多样化”（第 10 章合成三件套），人工负责“质检与纠错”。</p>
+</blockquote>
+<h3 id="step-2-10">Step 2 写自动校验器（10 分钟）</h3>
+<p>保存 scripts/validate_sft_dataset.py：</p>
+<pre><code class="language-python"># scripts/validate_sft_dataset.py —— SFT 数据集自动校验（字段/重复/分布）
+import hashlib
+import json
+import pathlib
+
+root = pathlib.Path(__file__).resolve().parent.parent
+src = root / &quot;data&quot; / &quot;sft_dataset_v1.jsonl&quot;
+report_path = root / &quot;logs&quot; / &quot;sft_dataset_qc.json&quot;
+
+ALLOWED_TASKS = {&quot;direct_qa&quot;, &quot;steps&quot;, &quot;to_json&quot;, &quot;extract&quot;, &quot;refusal&quot;}
+REQUIRED = [&quot;instruction&quot;, &quot;input&quot;, &quot;output&quot;, &quot;task_type&quot;, &quot;difficulty&quot;, &quot;source&quot;]
+
+rows = [json.loads(line) for line in open(src, encoding=&quot;utf-8&quot;)]
+errors = []
+seen_inst = {}
+
+for idx, row in enumerate(rows):
+    for field in REQUIRED:
+        if field not in row or str(row[field]).strip() == &quot;&quot;:
+            errors.append({&quot;row&quot;: idx, &quot;type&quot;: &quot;missing_field&quot;, &quot;field&quot;: field})
+    if len(str(row.get(&quot;output&quot;, &quot;&quot;))) &lt; 5:
+        errors.append({&quot;row&quot;: idx, &quot;type&quot;: &quot;output_too_short&quot;})
+    if row.get(&quot;task_type&quot;) not in ALLOWED_TASKS:
+        errors.append({&quot;row&quot;: idx, &quot;type&quot;: &quot;unknown_task&quot;, &quot;value&quot;: row.get(&quot;task_type&quot;)})
+    h = hashlib.md5(str(row.get(&quot;instruction&quot;, &quot;&quot;)).encode(&quot;utf-8&quot;)).hexdigest()
+    if h in seen_inst:
+        errors.append({&quot;row&quot;: idx, &quot;type&quot;: &quot;duplicate_instruction&quot;, &quot;first_row&quot;: seen_inst[h]})
+    else:
+        seen_inst[h] = idx
+
+dist = {}
+for row in rows:
+    key = row.get(&quot;task_type&quot;, &quot;?&quot;)
+    dist[key] = dist.get(key, 0) + 1
+diff = {}
+for row in rows:
+    key = row.get(&quot;difficulty&quot;, &quot;?&quot;)
+    diff[key] = diff.get(key, 0) + 1
+
+report = {&quot;total&quot;: len(rows), &quot;errors&quot;: len(errors), &quot;error_list&quot;: errors[:20], &quot;task_dist&quot;: dist, &quot;difficulty_dist&quot;: diff}
+with open(report_path, &quot;w&quot;, encoding=&quot;utf-8&quot;) as f:
+    json.dump(report, f, ensure_ascii=False, indent=2)
+print(&quot;total:&quot;, len(rows), &quot;errors:&quot;, len(errors))
+print(&quot;task_dist:&quot;, dist)
+if errors:
+    print(&quot;first errors:&quot;, errors[:5])
+</code></pre>
+<p>运行：</p>
+<pre><code class="language-bash">python scripts/validate_sft_dataset.py
+cat logs/sft_dataset_qc.json
+</code></pre>
+<h3 id="step-3-10">Step 3 人工抽检 + 标注规范模板（10 分钟）</h3>
+<ol>
+<li>按 task_type 分层抽 10%（每种任务至少 2 条），人工核对：指令是否自然、答案是否只含规则内信息、JSON 是否合法；</li>
+<li>建立标注规范 data/annotation_guideline.md，至少包含：任务类型定义、答案规范（见 3.2 表）、拒答策略、质检 checklist、常见错误示例；</li>
+<li>把抽检结论写进 logs/sft_dataset_review.md（通过率、问题清单）。</li>
+</ol>
+<h3 id="step-4">Step 4 打版本</h3>
+<pre><code class="language-bash">cd llm-demo
+git add data scripts logs
+git commit -m &quot;sft-data: v1 multi-task dataset (direct/steps/json/extract/refusal) + validator&quot;
+git tag sft-data-v1
+</code></pre>
+<blockquote>
+<p>自动校验只能抓“硬伤”（缺字段/重复/过短），抓不了“答案错但流畅”——所以人工抽检与金样评审永远不能省。</p>
+</blockquote>
+<h2 id="06">06 参数详解：数据集构建速查</h2>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>参考取值</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>任务类型数</td>
+<td>5–20 类</td>
+<td>先按线上场景列覆盖矩阵，再定类型</td>
+</tr>
+<tr>
+<td>每任务样本数</td>
+<td>500–5000 条</td>
+<td>按任务重要性分配，别平均主义</td>
+</tr>
+<tr>
+<td>难度分布</td>
+<td>易:中:难 ≈ 4:4:2</td>
+<td>全简单=模型只会送分题</td>
+</tr>
+<tr>
+<td>指令多样性</td>
+<td>同任务 ≥20 种句式</td>
+<td>用模板+LLM 改写，n-gram 重复率&lt;30%</td>
+</tr>
+<tr>
+<td>答案长度</td>
+<td>20–500 字（按任务）</td>
+<td>JSON 任务不设限但必须合法</td>
+</tr>
+<tr>
+<td>质检抽检率</td>
+<td>10%–20%（高危任务 100%）</td>
+<td>安全/财务/医疗类必须全检</td>
+</tr>
+<tr>
+<td>金样规模</td>
+<td>每任务 20–50 条</td>
+<td>标注培训与一致性度量用</td>
+</tr>
+<tr>
+<td>元数据</td>
+<td>task_type/difficulty/source/rule_id</td>
+<td>缺元数据=无法分析与回滚</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="07">07 高频踩坑排查</h2>
+<p><strong>坑 1：任务偏科</strong>
+症状：90% 是直接问答，线上高频的“转 JSON/拒答/分步”全没练过。
+解法：先做覆盖矩阵（任务×场景×格式），按线上流量分布配样本。</p>
+<p><strong>坑 2：指令千篇一律</strong>
+症状：1000 条数据只有 5 种问法，模型换个说法就不认识。
+解法：同任务 20+ 句式模板 + LLM 改写；监控指令 n-gram 重复率。</p>
+<p><strong>坑 3：答案“流畅但错误”</strong>
+症状：AI 写的答案文笔通顺但型号/流程是编的，模型学得飞快。
+解法：答案必须锚定知识库原文；关键实体自动校验；高危领域专家逐条审。</p>
+<p><strong>坑 4：指令泄漏答案</strong>
+症状：“请按 HP LaserJet M405 的流程处理”，模型只学会了复读。
+解法：指令里禁止出现答案关键信息；生成后用规则检查指令-答案重叠。</p>
+<p><strong>坑 5：标注员各写各的</strong>
+症状：同样一个任务，答案格式三种风格。
+解法：答案规范写进 guideline，试标合格再正式标；10%–20% 交叉抽检 + 分歧仲裁。</p>
+<p><strong>坑 6：质检只数数量</strong>
+症状：报告写“抽检 100 条全部通过”，但没定义“通过”标准。
+解法：通过标准=金样一致率+格式合规+事实核对三合一；把标准写进质检 checklist。</p>
+<p><strong>坑 7：数据迭代没有版本</strong>
+症状：模型 A 用了 v1，模型 B 用了“改了一点的 v1”，出问题无法回滚。
+解法：数据集版本 + manifest（来源/规则版本/质检报告），每次训练记录数据集版本（第 04/44 章）。</p>
+<hr />
+<h2 id="08">08 进阶优化：数据集的进化方向</h2>
+<p><strong>① 困难样本挖掘闭环</strong>：SFT 上线后收集答错/用户不满意的请求，脱敏后人工修正入库——数据随业务一起生长，而不是一次性工程。</p>
+<p><strong>② LLM 辅助标注</strong>：让强模型先给“候选答案”，人工只做“改错与确认”，标注效率提升 2–5 倍；高危任务仍要人工全审。</p>
+<p><strong>③ Evol-Instruct 式扩写</strong>：用“加约束/加深难度/加场景”的指令让 LLM 把简单题改造成难题，扩充困难样本池（注意防幻觉与去重）。</p>
+<p><strong>④ 主动学习选样本</strong>：用当前模型对未标注池预测，挑“最不会/最不确定”的样本优先标注——同样的标注预算，信息量翻倍。</p>
+<p><strong>⑤ 数据血缘与效果归因</strong>：把每条数据与“哪个任务/哪个版本/哪次评测提升”关联，模型效果回退时能快速定位是哪批数据带偏（第 44 章）。</p>
+<hr />
+<h2 id="09-top3">09 本章核心总结（TOP3）</h2>
+<p><strong>TOP1</strong>：SFT 数据集 = 任务覆盖矩阵 × 指令多样性 × 答案质量；先按线上场景画覆盖矩阵，再分配样本，别让“直接问答”垄断数据集。</p>
+<p><strong>TOP2</strong>：标注是规范化生产：答案规范（Answer Spec）+ 标注 SOP（试标→正式→抽检→仲裁）+ 金样，三者缺一不可；自动校验只能抓硬伤，抓不了“错得流畅”。</p>
+<p><strong>TOP3</strong>：每条数据带元数据（task_type/difficulty/source/rule_id），数据集版本化并配质检报告——数据是模型效果的第一杠杆，值得像代码一样管理。</p>
+<hr />
+<h2 id="10">10 连载衔接</h2>
+<p>上一章（第 15 章）跑通了 SFT 流程；本章回答了“数据从哪来、怎么保证质量”——主线工程的领域指令集从 20 条模板问答升级为多任务、带元数据、过质检的数据资产。</p>
+<p>下一章解决“模型怎么说”的最后一公里：【第 17 章】微调模板设计：Chat Template、角色设定与多轮拼接。同样的数据，模板设计错了，效果天差地别。</p>
+<hr />
+<h2 id="11">11 话题标签与系列目录索引</h2>
+<p>话题标签：<strong>#LLM全栈工程 #SFT数据 #指令数据集 #数据标注 #微调 #工程实战</strong>（Voice前沿 出品，欢迎收藏追更）</p>
+<p><strong>系列目录（46 章，随连载持续更新）</strong></p>
+<p>第 0 阶段·开篇引路
+- 01 一条大模型生产线全程发生了什么
+- 02 2 小时跑通最小闭环
+- 03 预训练到底在练什么</p>
+<p>第 1 阶段·预训练工程·数据核心层
+- 04 数据管道从零构建
+- 05 数据清洗规范与脏数据剔除
+- 06 文本过滤实战
+- 07 数据去重算法
+- 08 敏感数据脱敏
+- 09 数据质量打分体系
+- 10 领域专属数据构建
+- 11 增量预训练方案
+- 12 预训练超参选型与硬件适配
+- 13 断点续训、收敛判断与失败排查</p>
+<p>第 2 阶段·微调与对齐体系
+- 14 全维度微调技术拆解
+- 15 SFT 监督微调实战
+- 16 SFT 数据集构建与标注规范（本篇）
+- 17 微调模板设计
+- 18 微调超参调优策略
+- 19 过拟合、欠拟合与灾难遗忘
+- 20 微调效果评估体系
+- 21 多轮对话微调专项
+- 22 模型蒸馏实战
+- 23 奖励模型训练
+- 24 RLHF/PPO 工程落地
+- 25 RLAIF：AI 反馈自动对齐
+- 26 小样本与领域自适应微调</p>
+<p>第 3 阶段·基础部署与推理优化
+- 27 部署框架横向对比
+- 28 vLLM 部署实战与参数调优
+- 29 SGLang 高性能推理落地
+- 30 TensorRT-LLM 固化与加速
+- 31 模型量化实操
+- 32 模型剪枝与蒸馏压缩
+- 33 KV Cache 优化与上下文窗口拓展
+- 34 流式推理封装与高并发服务化</p>
+<p>第 4 阶段·高阶推理编译器极致优化
+- 35 推理编译器核心原理
+- 36 算子融合与计算图编译
+- 37 动态 shape 与显存编译器优化
+- 38 Speculative Decoding 投机推理进阶
+- 39 批量调度与并行深度适配
+- 40 内核重构与编译级量化</p>
+<p>第 5 阶段·全栈工程联调与项目落地
+- 41 全链路串联：数据到上线一体化流程
+- 42 领域大模型定制化落地
+- 43 高并发生产适配与端侧部署
+- 44 模型迭代升级与性能对标评测
+- 45 线上问题闭环排查
+- 46 工程化最佳实践汇总（手册终章）</p>
+<hr />
+<p><em>本文由 Voice前沿 出品 · 转载注明出处 · 下一篇：第 17 章 微调模板设计</em></p>
+</article>
+<nav class="prevnext"><a href="ch15.html">← 第 15 章 【LLM全栈工程·第15章】SFT 监督微调实战：数据、训练、评估到合并上线</a><a href="ch17.html" style="text-align:right">第 17 章 【LLM全栈工程·第17章】微调模板设计：Chat Template、角色设定与多轮拼接 →</a></nav>
+</main>
+<footer class="wrap"><p>LLM 全栈工程 · Voice前沿 出品 · 46 章连载 · 收藏即手册</p></footer>
+</body>
+</html>

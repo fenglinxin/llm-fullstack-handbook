@@ -1,0 +1,463 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>【LLM全栈工程·第37章】动态 shape 适配与显存编译器优化：让编译不怕“变” · LLM 全栈工程</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header"><div class="wrap">
+<a class="brand" href="../index.html">LLM 全栈工程<small>LLM 工业级全栈工程落地手册 · 46 章</small></a>
+<nav><a href="../index.html">目录</a><a href="https://github.com/">GitHub 仓库</a></nav>
+</div></header>
+<main class="wrap">
+<nav class="crumbs"><a href="../index.html">全部章节</a> / 【LLM全栈工程·第37章】动态 shape 适配与显存编译器优化：让编译不怕“变”</nav>
+<details class="toc-box"><summary>本章目录</summary><div class="toc">
+<ul>
+<li><a href="#_1">单篇内容卡（排版本忽略）</a></li>
+<li><a href="#01">01 开篇导语</a></li>
+<li><a href="#02-shape">02 白话原理：为什么 shape 变会让编译吃亏</a><ul>
+<li><a href="#21">2.1 编译器的“形状锁定”</a></li>
+<li><a href="#22-bucketing">2.2 分桶（Bucketing）思路</a></li>
+</ul>
+</li>
+<li><a href="#03">03 分桶设计与显存编译器</a><ul>
+<li><a href="#31">3.1 分桶设计三原则</a></li>
+<li><a href="#32-cuda-graph">3.2 CUDA Graph 桶池</a></li>
+<li><a href="#33">3.3 显存编译器在优化什么</a></li>
+</ul>
+</li>
+<li><a href="#05-40">05 分步实操：长度分布→分桶→基准实验（约 40 分钟）</a><ul>
+<li><a href="#step-1-10">Step 1 分桶规划器（10 分钟）</a></li>
+<li><a href="#step-2-vs-10">Step 2 动态 vs 分桶基准（10 分钟）</a></li>
+<li><a href="#step-3-10">Step 3 服务集成与监控（10 分钟）</a></li>
+</ul>
+</li>
+<li><a href="#06-shape">06 参数详解：动态 shape 配置速查</a></li>
+<li><a href="#07">07 高频踩坑排查</a></li>
+<li><a href="#08-shape">08 进阶优化：动态 shape 与显存的进化方向</a></li>
+<li><a href="#09-top3">09 本章核心总结（TOP3）</a></li>
+<li><a href="#10">10 连载衔接</a></li>
+<li><a href="#11">11 话题标签与系列目录索引</a></li>
+</ul>
+</div>
+</details>
+<article class="article">
+<h1 id="llm37-shape">【LLM全栈工程·第37章】动态 shape 适配与显存编译器优化：让编译不怕“变”</h1>
+<blockquote>
+<p>本篇为「LLM全栈工程」连载第 37 章（Voice前沿）。主标题以上为准；备选标题（供运营选用，不进正文）：① 真实流量长度千变万化，编译器怎么办？动态 shape 与分桶；② CUDA Graph 为什么怕变 shape？固定桶+Graph 池实战；③ 显存编译器优化：内存规划、碎片与复用。</p>
+</blockquote>
+<hr />
+<h2 id="_1">单篇内容卡（排版本忽略）</h2>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>章节定位</td>
+<td>「高阶推理编译器极致优化」第 3 篇：解决动态 batch/序列长度与编译器的矛盾</td>
+</tr>
+<tr>
+<td>适用场景</td>
+<td>个人学习（shape 实验）；推理引擎开发者；企业长尾流量服务</td>
+</tr>
+<tr>
+<td>核心知识点</td>
+<td>shape 分桶/padding；CUDA Graph 桶池；dynamic 编译；显存规划与碎片</td>
+</tr>
+<tr>
+<td>技术选型</td>
+<td>动态编译 vs 分桶静态编译 vs 框架动态内核</td>
+</tr>
+<tr>
+<td>分步实操</td>
+<td>统计长度分布 → 分桶规划 → shape 基准实验 → 服务集成与监控</td>
+</tr>
+<tr>
+<td>参数详解</td>
+<td>桶数、分位数、pad 浪费率、Graph 池大小、dynamic 开关</td>
+</tr>
+<tr>
+<td>踩坑排查</td>
+<td>过度 padding、桶太多、动态重编译爆炸、Graph 捕获指针变、碎片</td>
+</tr>
+<tr>
+<td>进阶优化</td>
+<td>vLLM 式动态内核、PD 分离 shape、TRT profile、显存池</td>
+</tr>
+<tr>
+<td>本章 TOP3</td>
+<td>见文末</td>
+</tr>
+<tr>
+<td>下章预告</td>
+<td>第 38 章：Speculative Decoding 投机推理进阶</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="01">01 开篇导语</h2>
+<p>第 35–36 章的编译收益有个前提：<strong>shape 别老变</strong>。但真实线上流量恰恰相反——请求长度从 10 到 4000 token 都有，batch 也在动态进出。</p>
+<p>编译器的尴尬在于：</p>
+<ul>
+<li>固定 shape 编译最优化，但每次新 shape 都可能触发重编译；</li>
+<li>全部动态执行，又回到“每算子一次启动”的低效。</li>
+</ul>
+<p>工业解法是“分桶”：把连续的长度映射到少数几个“桶”，桶内 padding 到同一长度，每个桶编译/捕获一份——用少量 padding 浪费换掉编译爆炸。</p>
+<p>显存侧还有另一组问题：中间 buffer 的分配释放、碎片、CUDA Graph 的固定内存池。本章把“动态 shape + 显存”一起讲，因为它们高度耦合。</p>
+<blockquote>
+<p>一句话记住本章：<strong>动态 shape 的工程本质是“在 padding 浪费与重编译开销之间找平衡”，显存侧则要“规划、复用、防碎片”。</strong></p>
+</blockquote>
+<hr />
+<h2 id="02-shape">02 白话原理：为什么 shape 变会让编译吃亏</h2>
+<h3 id="21">2.1 编译器的“形状锁定”</h3>
+<p>编译器为某个 shape 生成最优 kernel 后，会记住这个 shape。来了新 shape：</p>
+<ul>
+<li>若允许动态：可能走通用慢路径或重新编译；</li>
+<li>若静态锁定：直接复用最快路径。</li>
+</ul>
+<p>CUDA Graph 更严格：它捕获的是一段“固定内存地址+固定形状”的执行序列——<strong>地址或形状一变，捕获结果就不能用</strong>。</p>
+<h3 id="22-bucketing">2.2 分桶（Bucketing）思路</h3>
+<pre><code class="language-text">真实长度: 37, 128, 95, 4000, 210, 88 ...
+桶划分: [1,128], [129,512], [513,2048], [2049,8192]
+每个请求 pad 到所在桶上限，执行对应桶的编译产物
+</code></pre>
+<p>代价：短请求被 pad 到 128 时浪费计算；收益：每个桶只编译一次、可捕获 CUDA Graph。</p>
+<blockquote>
+<p>记忆锚点：<strong>分桶 = 用“桶内 padding 浪费”买“编译产物复用”；桶边界要按真实长度分布设计，而不是拍脑袋 2 的幂。</strong></p>
+</blockquote>
+<h2 id="03">03 分桶设计与显存编译器</h2>
+<h3 id="31">3.1 分桶设计三原则</h3>
+<ol>
+<li><strong>按真实分布切</strong>：用线上长度 P50/P90/P99 设计边界，而不是 2 的幂硬切；</li>
+<li><strong>桶数量少而精</strong>：4–16 个桶常见；桶越多 padding 越少但编译/显存越多；</li>
+<li><strong>单独处理长尾</strong>：&gt;P99 的超长请求走“动态慢路径”，不为它建大桶拖累全体。</li>
+</ol>
+<h3 id="32-cuda-graph">3.2 CUDA Graph 桶池</h3>
+<p>每个桶维护一个 Graph 实例池：</p>
+<ul>
+<li>捕获时分配固定内存（graph memory pool）；</li>
+<li>请求进入桶→从池里取 Graph 重放；</li>
+<li>请求离开→归还池，地址复用。</li>
+</ul>
+<p><strong>注意</strong>：Graph 捕获期间所有输入张量地址必须稳定；动态 batch 需要“预留最大 batch 的 buffer，用 mask 屏蔽空位”。</p>
+<h3 id="33">3.3 显存编译器在优化什么</h3>
+<table>
+<thead>
+<tr>
+<th>优化</th>
+<th>做法</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>内存规划</td>
+<td>编译期决定每个中间张量的生命周期，复用 buffer</td>
+</tr>
+<tr>
+<td>缓存分配器</td>
+<td>PyTorch caching allocator/框架 arena，减少 cudaMalloc</td>
+</tr>
+<tr>
+<td>碎片治理</td>
+<td>PagedAttention 分块；长请求预分配策略</td>
+</tr>
+<tr>
+<td>Graph 内存池</td>
+<td>CUDA Graph 专用池，捕获后不再动态分配</td>
+</tr>
+<tr>
+<td>激活压缩</td>
+<td>checkpointing/融合减少峰值</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>工程现实：vLLM/SGLang/TRT-LLM 已内置动态批处理与显存池——自研引擎才需要从零做分桶；但理解这些机制能帮你选对框架参数。</p>
+</blockquote>
+<h2 id="05-40">05 分步实操：长度分布→分桶→基准实验（约 40 分钟）</h2>
+<h3 id="step-1-10">Step 1 分桶规划器（10 分钟）</h3>
+<p>保存 scripts/bucket_planner.py：</p>
+<pre><code class="language-python"># scripts/bucket_planner.py —— 按长度分布生成分桶方案
+# 用法：python bucket_planner.py &lt;桶数&gt; [样本数]
+import json
+import math
+import pathlib
+import random
+import sys
+
+n_buckets = int(sys.argv[1]) if len(sys.argv) &gt; 1 else 6
+n = int(sys.argv[2]) if len(sys.argv) &gt; 2 else 20000
+root = pathlib.Path(__file__).resolve().parent.parent
+
+random.seed(7)
+# 模拟线上长度分布：中位约 400 token，长尾到 8K
+lengths = sorted(int(min(8192, max(16, random.lognormvariate(math.log(400), 0.9)))) for _ in range(n))
+
+def pct(p):
+    return lengths[min(len(lengths) - 1, int(len(lengths) * p))]
+
+# 计算每桶上限（前一桶上限+1 到当前上限）
+upper = []
+prev = 0
+for b in [pct(k / n_buckets) for k in range(1, n_buckets + 1)]:
+    upper.append(max(prev + 1, b))
+    prev = b
+
+total_len = sum(lengths)
+pad_total = 0
+bucket_info = []
+for i, lim in enumerate(upper):
+    low = 1 if i == 0 else upper[i - 1] + 1
+    items = [x for x in lengths if low &lt;= x &lt;= lim]
+    if not items:
+        continue
+    pad = sum(lim - x for x in items)
+    pad_total += pad
+    bucket_info.append({&quot;bucket&quot;: i + 1, &quot;range&quot;: [low, lim], &quot;count&quot;: len(items),
+                        &quot;pad_tokens&quot;: pad, &quot;pad_ratio&quot;: round(pad / max(1, sum(items)), 4)})
+
+report = {&quot;n_buckets&quot;: len(bucket_info), &quot;samples&quot;: n,
+          &quot;length_p50&quot;: pct(0.5), &quot;length_p90&quot;: pct(0.9), &quot;length_p99&quot;: pct(0.99),
+          &quot;total_pad_ratio&quot;: round(pad_total / total_len, 4), &quot;buckets&quot;: bucket_info}
+out = root / &quot;logs&quot; / &quot;bucket_plan.json&quot;
+with open(out, &quot;w&quot;, encoding=&quot;utf-8&quot;) as f:
+    json.dump(report, f, ensure_ascii=False, indent=2)
+print(json.dumps(report, ensure_ascii=False, indent=2))
+</code></pre>
+<p>运行：</p>
+<pre><code class="language-bash">python scripts/bucket_planner.py 6
+cat logs/bucket_plan.json
+</code></pre>
+<p><strong>看什么</strong>：桶边界是否贴合分布（P50/P90/P99）；total_pad_ratio 是否可接受（&lt;10% 通常不错）；长尾是否被单独处理。</p>
+<blockquote>
+<p>生产用法：把线上请求日志的真实长度喂给脚本（替换模拟分布），得到你的专属分桶方案。</p>
+</blockquote>
+<h3 id="step-2-vs-10">Step 2 动态 vs 分桶基准（10 分钟）</h3>
+<p>保存 scripts/shape_bench.py：</p>
+<pre><code class="language-python"># scripts/shape_bench.py —— 动态编译 vs 分桶静态编译（近似对比）
+import json
+import pathlib
+import time
+
+import torch
+
+device = &quot;cuda&quot; if torch.cuda.is_available() else &quot;cpu&quot;
+root = pathlib.Path(__file__).resolve().parent.parent
+lengths = [64, 96, 128, 200, 256, 400, 512, 900]
+
+w = torch.randn(256, 256, device=device) * 0.1
+
+def op(x):
+    return torch.relu(x @ w)
+
+def sync():
+    if device == &quot;cuda&quot;:
+        torch.cuda.synchronize()
+
+def time_call(fn):
+    sync()
+    t0 = time.time()
+    fn()
+    sync()
+    return time.time() - t0
+
+# 路径 A：动态编译（每个新长度都可能触发编译/guard 检查）
+dyn = torch.compile(op)
+t_dyn = sum(time_call(lambda n=n: dyn(torch.randn(n, 256, device=device))) for n in lengths)
+
+# 路径 B：分桶静态编译（桶上限 128/256/512/1024，各编译一次后复用）
+bucket_limits = [128, 256, 512, 1024]
+def pick_bucket(n):
+    for lim in bucket_limits:
+        if n &lt;= lim:
+            return lim
+    return 1024
+
+compiled = {}
+def bucket_call(n):
+    lim = pick_bucket(n)
+    if lim not in compiled:
+        compiled[lim] = torch.compile(op)
+    x = torch.randn(lim, 256, device=device)
+    return compiled[lim](x)
+
+t_bucket = sum(time_call(lambda n=n: bucket_call(n)) for n in lengths)
+
+report = {&quot;device&quot;: device, &quot;lengths&quot;: lengths,
+          &quot;dynamic_total_s&quot;: round(t_dyn, 4), &quot;bucket_total_s&quot;: round(t_bucket, 4),
+          &quot;note&quot;: &quot;含首次编译开销；稳态收益需重复调用后测量&quot;}
+with open(root / &quot;logs&quot; / &quot;shape_bench.json&quot;, &quot;w&quot;, encoding=&quot;utf-8&quot;) as f:
+    json.dump(report, f, ensure_ascii=False, indent=2)
+print(json.dumps(report, ensure_ascii=False, indent=2))
+</code></pre>
+<p>运行：</p>
+<pre><code class="language-bash">python scripts/shape_bench.py
+cat logs/shape_bench.json
+</code></pre>
+<p><strong>看什么</strong>：首次全量调用下分桶通常更快（编译次数少）；如果差距小，说明你的模型/框架已内置动态处理（vLLM 场景无需自研分桶）。</p>
+<h3 id="step-3-10">Step 3 服务集成与监控（10 分钟）</h3>
+<ol>
+<li><strong>用 vLLM/SGLang/TRT-LLM 的场景</strong>：它们已内置动态 batch 与显存池，你只需按第 28/30 章调 max len 与 batch 参数；</li>
+<li><strong>自研引擎场景</strong>：按 bucket_plan.json 实现分桶调度 + CUDA Graph 桶池 + mask 处理空位；</li>
+<li>监控“padding 浪费率”（pad token/有效 token）与“Graph 命中率”，上线后按真实分布调桶；</li>
+<li>归档：</li>
+</ol>
+<pre><code class="language-bash">cd llm-demo
+git add scripts logs
+git commit -m &quot;shape: bucket planner + dynamic-vs-bucket bench&quot;
+git tag shape-v1
+</code></pre>
+<blockquote>
+<p>分桶是“显存/编译开销 ↔ padding 浪费”的权衡：上线后用真实日志每月重算一次桶边界。</p>
+</blockquote>
+<h2 id="06-shape">06 参数详解：动态 shape 配置速查</h2>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>参考</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>桶数</td>
+<td>4–16</td>
+<td>按分布 P50/P90/P99 切</td>
+</tr>
+<tr>
+<td>pad 浪费率</td>
+<td>&lt;10%</td>
+<td>过高=桶太粗</td>
+</tr>
+<tr>
+<td>长尾处理</td>
+<td>&gt;P99 走动态路径</td>
+<td>不为长尾建大桶</td>
+</tr>
+<tr>
+<td>Graph 池大小</td>
+<td>每桶 2–8 实例</td>
+<td>按并发</td>
+</tr>
+<tr>
+<td>dynamic 开关</td>
+<td>框架默认</td>
+<td>自研编译按需</td>
+</tr>
+<tr>
+<td>max batch 预留</td>
+<td>峰值×1.2</td>
+<td>Graph 捕获需要固定上限</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="07">07 高频踩坑排查</h2>
+<p><strong>坑 1：桶按 2 的幂硬切</strong>
+症状：512 的桶装了 90% 的 100-token 请求，浪费巨大。
+解法：按真实分布分位切；用本章 planner。</p>
+<p><strong>坑 2：桶太多</strong>
+症状：编译/显存爆炸，收益被吃掉。
+解法：4–16 桶起步；差异小的边界合并。</p>
+<p><strong>坑 3：CUDA Graph 捕获地址变化</strong>
+症状：重放报错或结果错。
+解法：固定输入 buffer；动态 batch 用“最大容量+mask”。</p>
+<p><strong>坑 4：动态重编译爆炸</strong>
+症状：自研编译下每个新长度都编译。
+解法：分桶静态编译；框架场景交给框架。</p>
+<p><strong>坑 5：只看编译时间不看稳态</strong>
+症状：首次调用慢就否定编译。
+解法：重复调用测稳态；生产做预热。</p>
+<p><strong>坑 6：显存碎片</strong>
+症状：长时间运行后可用显存越来越少。
+解法：用框架缓存分配器/arena；Graph 专用池；监控碎片率。</p>
+<p><strong>坑 7：自研重复造轮子</strong>
+症状：vLLM 已内置动态批处理，还自研分桶。
+解法：先确认框架能力；自研只覆盖框架覆盖不了的部分。</p>
+<hr />
+<h2 id="08-shape">08 进阶优化：动态 shape 与显存的进化方向</h2>
+<p><strong>① vLLM 式动态内核</strong>：attention/prefill 内核直接接受运行时长度（mask/分块），无需分桶——框架层的最优解。</p>
+<p><strong>② PD 分离后的 shape</strong>：prefill 长度分布宽、decode 恒为 1 token/步，分开后各自 shape 特征简单，编译更高效（第 39 章）。</p>
+<p><strong>③ TRT profile 多档</strong>：TensorRT-LLM 的 min/opt/max profile 本质就是分桶思想，把 opt 对准 P50/P90。</p>
+<p><strong>④ 显存池与 VMEM</strong>：为长请求预留连续显存段、短请求走池化分配；新硬件显存管理特性持续演进。</p>
+<p><strong>⑤ 分布驱动的自适应</strong>：根据线上长度分布自动调整桶边界与 Graph 池大小，做成“自调优引擎”。</p>
+<hr />
+<h2 id="09-top3">09 本章核心总结（TOP3）</h2>
+<p><strong>TOP1</strong>：动态 shape 的解法是分桶：按真实分布（P50/P90/P99）切 4–16 桶，桶内 padding、桶间复用编译产物/CUDA Graph，用 &lt;10% 浪费换稳定性能。</p>
+<p><strong>TOP2</strong>：显存编译器管“规划/复用/碎片”：缓存分配器、Graph 专用池、分页 KV；CUDA Graph 捕获必须固定地址与 shape，动态 batch 用最大容量+mask。</p>
+<p><strong>TOP3</strong>：vLLM 等框架已内置动态批处理——先用框架参数，自研分桶只用于框架覆盖不到的自研引擎；上线后按月用真实分布重算桶边界。</p>
+<hr />
+<h2 id="10">10 连载衔接</h2>
+<p>上一章（第 36 章）完成算子融合；本章解决了“shape 会变”的编译难题——动态与静态、显存与性能的账都算清了。</p>
+<p>下一章挑战“又少算一遍”：【第 38 章】Speculative Decoding 投机推理进阶。让草稿模型先猜、大模型只验证，输出速度再上一个台阶。</p>
+<hr />
+<h2 id="11">11 话题标签与系列目录索引</h2>
+<p>话题标签：<strong>#LLM全栈工程 #动态Shape #分桶 #CUDA Graph #显存优化 #编译优化 #工程实战</strong>（Voice前沿 出品，欢迎收藏追更）</p>
+<p><strong>系列目录（46 章，随连载持续更新）</strong></p>
+<p>第 0 阶段·开篇引路
+- 01 一条大模型生产线全程发生了什么
+- 02 2 小时跑通最小闭环
+- 03 预训练到底在练什么</p>
+<p>第 1 阶段·预训练工程·数据核心层
+- 04 数据管道从零构建
+- 05 数据清洗规范与脏数据剔除
+- 06 文本过滤实战
+- 07 数据去重算法
+- 08 敏感数据脱敏
+- 09 数据质量打分体系
+- 10 领域专属数据构建
+- 11 增量预训练方案
+- 12 预训练超参选型与硬件适配
+- 13 断点续训、收敛判断与失败排查</p>
+<p>第 2 阶段·微调与对齐体系
+- 14 全维度微调技术拆解
+- 15 SFT 监督微调实战
+- 16 SFT 数据集构建与标注规范
+- 17 微调模板设计
+- 18 微调超参调优策略
+- 19 过拟合、欠拟合与灾难遗忘
+- 20 微调效果评估体系
+- 21 多轮对话微调专项
+- 22 模型蒸馏实战
+- 23 奖励模型训练
+- 24 RLHF/PPO 工程落地
+- 25 RLAIF：AI 反馈自动对齐
+- 26 小样本与领域自适应微调</p>
+<p>第 3 阶段·基础部署与推理优化
+- 27 部署框架横向对比
+- 28 vLLM 部署实战与参数调优
+- 29 SGLang 高性能推理落地
+- 30 TensorRT-LLM 固化与加速
+- 31 模型量化实操
+- 32 模型剪枝与蒸馏压缩
+- 33 KV Cache 优化与上下文窗口拓展
+- 34 流式推理封装与高并发服务化</p>
+<p>第 4 阶段·高阶推理编译器极致优化
+- 35 推理编译器核心原理
+- 36 算子融合与计算图编译实战
+- 37 动态 shape 与显存编译器优化（本篇）
+- 38 Speculative Decoding 投机推理进阶
+- 39 批量调度与并行深度适配
+- 40 内核重构与编译级量化</p>
+<p>第 5 阶段·全栈工程联调与项目落地
+- 41 全链路串联：数据到上线一体化流程
+- 42 领域大模型定制化落地
+- 43 高并发生产适配与端侧部署
+- 44 模型迭代升级与性能对标评测
+- 45 线上问题闭环排查
+- 46 工程化最佳实践汇总（手册终章）</p>
+<hr />
+<p><em>本文由 Voice前沿 出品 · 转载注明出处 · 下一篇：第 38 章 Speculative Decoding 投机推理进阶</em></p>
+</article>
+<nav class="prevnext"><a href="ch36.html">← 第 36 章 【LLM全栈工程·第36章】算子融合与计算图编译实战：把零散 kernel 合成一个</a><a href="ch38.html" style="text-align:right">第 38 章 【LLM全栈工程·第38章】Speculative Decoding 投机推理进阶：让大模型“先猜后验” →</a></nav>
+</main>
+<footer class="wrap"><p>LLM 全栈工程 · Voice前沿 出品 · 46 章连载 · 收藏即手册</p></footer>
+</body>
+</html>

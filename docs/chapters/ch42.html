@@ -1,0 +1,496 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>【LLM全栈工程·第42章】领域大模型定制化落地：从立项到上线 · LLM 全栈工程</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header"><div class="wrap">
+<a class="brand" href="../index.html">LLM 全栈工程<small>LLM 工业级全栈工程落地手册 · 46 章</small></a>
+<nav><a href="../index.html">目录</a><a href="https://github.com/">GitHub 仓库</a></nav>
+</div></header>
+<main class="wrap">
+<nav class="crumbs"><a href="../index.html">全部章节</a> / 【LLM全栈工程·第42章】领域大模型定制化落地：从立项到上线</nav>
+<details class="toc-box"><summary>本章目录</summary><div class="toc">
+<ul>
+<li><a href="#_1">单篇内容卡（排版本忽略）</a></li>
+<li><a href="#01">01 开篇导语</a></li>
+<li><a href="#02">02 白话原理：需求拆解成“可决策的问题”</a><ul>
+<li><a href="#21">2.1 需求四问</a></li>
+<li><a href="#22">2.2 需求拆解成能力清单</a></li>
+</ul>
+</li>
+<li><a href="#03">03 路线决策树与预算</a><ul>
+<li><a href="#31">3.1 路线决策表</a></li>
+<li><a href="#32">3.2 预算三件套</a></li>
+<li><a href="#33-poc-24">3.3 PoC 设计（2–4 周）</a></li>
+</ul>
+</li>
+<li><a href="#05-30">05 分步实操：生成项目计划书（30 分钟）</a><ul>
+<li><a href="#step-1-15">Step 1 项目计划生成器（15 分钟）</a></li>
+<li><a href="#step-2-10">Step 2 填项目章程并定成功指标（10 分钟）</a></li>
+<li><a href="#step-3-poc-41">Step 3 PoC 执行与评审（按第 41 章流水线）</a></li>
+</ul>
+</li>
+<li><a href="#06">06 参数详解：立项配置速查</a></li>
+<li><a href="#07">07 高频踩坑排查</a></li>
+<li><a href="#08">08 进阶优化：领域落地的进化方向</a></li>
+<li><a href="#09-top3">09 本章核心总结（TOP3）</a></li>
+<li><a href="#10">10 连载衔接</a></li>
+<li><a href="#11">11 话题标签与系列目录索引</a></li>
+</ul>
+</div>
+</details>
+<article class="article">
+<h1 id="llm42">【LLM全栈工程·第42章】领域大模型定制化落地：从立项到上线</h1>
+<blockquote>
+<p>本篇为「LLM全栈工程」连载第 42 章（Voice前沿）。主标题以上为准；备选标题（供运营选用，不进正文）：① 领域大模型项目怎么立项？需求拆解与路线决策树；② RAG、微调还是继续预训练？一张决策表定路线；③ 从 PoC 到上线：领域模型项目的里程碑与避坑。</p>
+</blockquote>
+<hr />
+<h2 id="_1">单篇内容卡（排版本忽略）</h2>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>章节定位</td>
+<td>「全栈工程联调与项目落地」第 2 篇：领域定制项目从立项到上线的完整方法</td>
+</tr>
+<tr>
+<td>适用场景</td>
+<td>小团队立项；企业领域 LLM 项目负责人；技术方案评审</td>
+</tr>
+<tr>
+<td>核心知识点</td>
+<td>需求拆解；路线决策树（RAG/SFT/CPT/全参）；PoC 设计；预算与成功指标</td>
+</tr>
+<tr>
+<td>技术选型</td>
+<td>云 API vs 开源自建 vs 混合；RAG vs 微调 vs CPT 组合</td>
+</tr>
+<tr>
+<td>分步实操</td>
+<td>填项目画像 → 路线决策 → 生成项目计划书 → PoC 里程碑 → 验收上线</td>
+</tr>
+<tr>
+<td>参数详解</td>
+<td>PoC 周期、种子数据量、评测阈值、预算、风险等级</td>
+</tr>
+<tr>
+<td>踩坑排查</td>
+<td>需求不清、路线拍脑袋、无成功指标、合规忽视、范围蔓延</td>
+</tr>
+<tr>
+<td>进阶优化</td>
+<td>领域平台化、多领域复用、评测驱动立项、成本治理</td>
+</tr>
+<tr>
+<td>本章 TOP3</td>
+<td>见文末</td>
+</tr>
+<tr>
+<td>下章预告</td>
+<td>第 43 章：高并发生产适配与端侧部署</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="01">01 开篇导语</h2>
+<p>第 41 章把生产线串了起来。但生产线本身要回答一个业务问题：<strong>“我们要做一个什么领域模型、花多少钱、达到什么效果？”</strong></p>
+<p>很多项目失败不是因为技术，而是因为立项阶段三件事没做：</p>
+<ol>
+<li>需求没拆清（“做一个客服大模型”太模糊）；</li>
+<li>路线拍脑袋（明明知识天天变，却选择微调而不是 RAG）；</li>
+<li>没有成功指标（上线了也不知道算不算成功）。</li>
+</ol>
+<p>本章给一套可复用的立项流程：<strong>需求拆解 → 数据摸底 → 路线决策 → PoC 设计 → 里程碑 → 验收上线</strong>，并提供一个能生成“项目计划书”的脚本。</p>
+<blockquote>
+<p>一句话记住本章：<strong>领域项目 = 先回答“知识变不变、格式要不要、数据有多少、预算多少”，再决定路线；PoC 用 2–4 周和最小数据验证最关键的假设。</strong></p>
+</blockquote>
+<hr />
+<h2 id="02">02 白话原理：需求拆解成“可决策的问题”</h2>
+<h3 id="21">2.1 需求四问</h3>
+<table>
+<thead>
+<tr>
+<th>问题</th>
+<th>影响路线</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>知识会频繁更新吗？</td>
+<td>会→RAG 优先；稳定→可微调/CPT</td>
+</tr>
+<tr>
+<td>需要固定格式/行为吗？</td>
+<td>要→SFT；只要检索→RAG</td>
+</tr>
+<tr>
+<td>有多少领域文本/标注？</td>
+<td>多→CPT+SFT；少→RAG+少样本</td>
+</tr>
+<tr>
+<td>算力/预算多少？</td>
+<td>决定全参/CPT/LoRA/云 API</td>
+</tr>
+</tbody>
+</table>
+<h3 id="22">2.2 需求拆解成能力清单</h3>
+<p>把“做一个 XX 助手”拆成能力项，例如 IT 帮助台：</p>
+<ul>
+<li>知识问答（覆盖知识库）</li>
+<li>分步/JSON/拒答等格式能力</li>
+<li>多轮上下文</li>
+<li>安全合规边界</li>
+</ul>
+<p>每个能力项对应数据与评测要求——这就是第 20 章评测集的“需求源头”。</p>
+<blockquote>
+<p>记忆锚点：<strong>立项的第一步不是选模型，是写“能力清单+验收标准”；写不出来就不该开工。</strong></p>
+</blockquote>
+<h2 id="03">03 路线决策树与预算</h2>
+<h3 id="31">3.1 路线决策表</h3>
+<table>
+<thead>
+<tr>
+<th>画像</th>
+<th>推荐路线</th>
+<th>原因</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>知识高频更新</td>
+<td>RAG</td>
+<td>改知识不改模型</td>
+</tr>
+<tr>
+<td>知识稳定+格式要求</td>
+<td>LoRA SFT</td>
+<td>便宜够用</td>
+</tr>
+<tr>
+<td>大量领域文档+小标注</td>
+<td>CPT/DAPT → SFT</td>
+<td>先补知识底色</td>
+</tr>
+<tr>
+<td>能力全面+预算充足</td>
+<td>全参 SFT/RLHF</td>
+<td>上限最高</td>
+</tr>
+<tr>
+<td>只有 100 条数据</td>
+<td>提示/RAG+少样本</td>
+<td>别急着训</td>
+</tr>
+<tr>
+<td>高合规风险</td>
+<td>人工兜底+全链路审计</td>
+<td>路线其次</td>
+</tr>
+</tbody>
+</table>
+<h3 id="32">3.2 预算三件套</h3>
+<ol>
+<li><strong>数据成本</strong>：标注/清洗人天 × 单价（合成数据要加校验成本）；</li>
+<li><strong>算力成本</strong>：卡时估算（第 12 章方法）× 单价；</li>
+<li><strong>运维成本</strong>：GPU 池/推理/监控月费。</li>
+</ol>
+<blockquote>
+<p>预算要写进立项书，并留 20%–30% 风险金（数据返工、评测不达标重训）。</p>
+</blockquote>
+<h3 id="33-poc-24">3.3 PoC 设计（2–4 周）</h3>
+<table>
+<thead>
+<tr>
+<th>周</th>
+<th>目标</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>第 1 周</td>
+<td>需求确认+数据摸底+基线（提示/RAG 方案）</td>
+</tr>
+<tr>
+<td>第 2 周</td>
+<td>种子数据 100–500 条+LoRA SFT+评测集 v1</td>
+</tr>
+<tr>
+<td>第 3 周</td>
+<td>路线 A/B 对比（RAG vs 微调 vs 组合）+调优</td>
+</tr>
+<tr>
+<td>第 4 周</td>
+<td>写 PoC 报告：效果、成本、风险、Go/No-Go 建议</td>
+</tr>
+</tbody>
+</table>
+<p>PoC 的成功指标示例：领域题通过率≥80%、通用不掉、TTFT&lt;1s、单次成本&lt;X 元——<strong>上线前先写清楚“怎样算成功”。</strong></p>
+<h2 id="05-30">05 分步实操：生成项目计划书（30 分钟）</h2>
+<h3 id="step-1-15">Step 1 项目计划生成器（15 分钟）</h3>
+<p>保存 scripts/domain_project_plan.py：</p>
+<pre><code class="language-python"># scripts/domain_project_plan.py —— 领域项目路线与计划生成器
+# 用法：python domain_project_plan.py &lt;项目名&gt; &lt;know_change:y/n&gt; &lt;need_format:y/n&gt; &lt;领域文档GB&gt; &lt;标注K条&gt; [--gpu-hours 100] [--high-risk]
+import pathlib
+import sys
+
+root = pathlib.Path(__file__).resolve().parent.parent
+name = sys.argv[1]
+know_change = (sys.argv[2] if len(sys.argv) &gt; 2 else &quot;n&quot;).lower() == &quot;y&quot;
+need_format = (sys.argv[3] if len(sys.argv) &gt; 3 else &quot;y&quot;).lower() == &quot;y&quot;
+doc_gb = float(sys.argv[4]) if len(sys.argv) &gt; 4 else 0.0
+labeled_k = float(sys.argv[5]) if len(sys.argv) &gt; 5 else 1.0
+gpu_hours = 100
+high_risk = False
+if &quot;--gpu-hours&quot; in sys.argv:
+    gpu_hours = int(sys.argv[sys.argv.index(&quot;--gpu-hours&quot;) + 1])
+if &quot;--high-risk&quot; in sys.argv:
+    high_risk = True
+
+if know_change:
+    route = &quot;RAG 优先（知识会变），微调只做格式/行为增强&quot;
+elif labeled_k &lt; 1 and doc_gb &lt; 5:
+    route = &quot;提示/RAG + 少样本（数据不足先别训）&quot;
+elif doc_gb &gt;= 5:
+    route = &quot;DAPT/CPT（领域文档打底）→ LoRA SFT（格式行为）&quot;
+else:
+    route = &quot;LoRA SFT（种子 1k+ 起）+ 可选 RAG 补最新知识&quot;
+
+lines = [&quot;# %s 项目计划书&quot; % name, &quot;&quot;,
+         &quot;## 1. 项目画像&quot;, &quot;- 知识更新频率高: %s&quot; % know_change,
+         &quot;- 需要固定格式/行为: %s&quot; % need_format,
+         &quot;- 领域文档量: %.1f GB&quot; % doc_gb, &quot;- 标注数据: %.1f K 条&quot; % labeled_k,
+         &quot;- GPU 预算: %d 卡时&quot; % gpu_hours, &quot;&quot;,
+         &quot;## 2. 推荐路线&quot;, &quot;- &quot; + route, &quot;&quot;,
+         &quot;## 3. PoC 里程碑（4 周）&quot;,
+         &quot;- 第 1 周：需求确认 + 数据摸底 + 提示/RAG 基线&quot;,
+         &quot;- 第 2 周：种子数据与评测集 v1（100–500 条）&quot;,
+         &quot;- 第 3 周：路线 A/B 对比与调优&quot;,
+         &quot;- 第 4 周：PoC 报告（效果/成本/风险/Go-No-Go）&quot;, &quot;&quot;,
+         &quot;## 4. 成功指标（示例）&quot;,
+         &quot;- 领域 held-out 通过率 ≥ 80%&quot;,
+         &quot;- 通用能力不掉出容忍线&quot;,
+         &quot;- TTFT &lt; 1s（按业务调整）&quot;,
+         &quot;- 单次成本 &lt; 预算线&quot;, &quot;&quot;]
+if high_risk:
+    lines += [&quot;## 5. 高风险合规要求&quot;, &quot;- 数据脱敏与来源审计（第 08 章）&quot;,
+              &quot;- 答案人工抽检 100%（关键场景）&quot;, &quot;- 全链路日志与回滚预案&quot;, &quot;&quot;]
+
+out = root / &quot;docs&quot; / (name + &quot;_project_plan.md&quot;)
+out.parent.mkdir(parents=True, exist_ok=True)
+out.write_text(&quot;\n&quot;.join(lines), encoding=&quot;utf-8&quot;)
+print(&quot;\n&quot;.join(lines[:12]))
+print(&quot;... plan -&gt;&quot;, out)
+</code></pre>
+<p>运行两个场景对比：</p>
+<pre><code class="language-bash">python scripts/domain_project_plan.py it-helpdesk y y 0.2 0.5 --gpu-hours 50
+python scripts/domain_project_plan.py legal-assistant n y 20 2 --gpu-hours 300 --high-risk
+cat docs/it-helpdesk_project_plan.md
+</code></pre>
+<p><strong>看什么</strong>：同一套输入逻辑给出不同路线（帮助台→RAG 优先；法律助手→DAPT+SFT+合规门）；把生成结果交给业务方确认“画像参数”是否真实。</p>
+<h3 id="step-2-10">Step 2 填项目章程并定成功指标（10 分钟）</h3>
+<p>按 docs/{项目}_project_plan.md 补全：</p>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>业务目标</td>
+<td>一句话（如：工单首响时间降低 30%）</td>
+</tr>
+<tr>
+<td>能力清单</td>
+<td>问答/格式/多轮/拒答……</td>
+</tr>
+<tr>
+<td>成功指标</td>
+<td>领域通过率/通用回退/时延/成本</td>
+</tr>
+<tr>
+<td>数据来源与合规</td>
+<td>哪些系统、脱敏谁负责</td>
+</tr>
+<tr>
+<td>干系人</td>
+<td>业务方/领域专家/AI 团队</td>
+</tr>
+<tr>
+<td>Go/No-Go 标准</td>
+<td>PoC 第 4 周评审用</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>成功指标必须业务方可签字——避免“技术说成功、业务不认账”。</p>
+</blockquote>
+<h3 id="step-3-poc-41">Step 3 PoC 执行与评审（按第 41 章流水线）</h3>
+<ol>
+<li>按计划书第 3 节跑 4 周 PoC，资产全部走 manifest；</li>
+<li>第 4 周评审会输出 Go/No-Go：Go 则进入正式化（扩数据→正式训练→上线），No-Go 则记录原因（数据不足/成本超/效果不达）；</li>
+<li>归档：</li>
+</ol>
+<pre><code class="language-bash">cd llm-demo
+git add docs scripts
+git commit -m &quot;project: it-helpdesk plan (RAG route) + legal plan (DAPT+compliance)&quot;
+git tag project-plan-v1
+</code></pre>
+<blockquote>
+<p>立项文档与 PoC 报告是项目最重要的资产之一：它们让“为什么这么做”可追溯，后续迭代（第 44 章）都基于这份基线。</p>
+</blockquote>
+<h2 id="06">06 参数详解：立项配置速查</h2>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>参考</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>PoC 周期</td>
+<td>2–4 周</td>
+<td>验证最关键假设</td>
+</tr>
+<tr>
+<td>种子数据</td>
+<td>100–500 条</td>
+<td>覆盖能力清单</td>
+</tr>
+<tr>
+<td>领域文档触发量</td>
+<td>&gt;5GB 考虑 DAPT</td>
+<td>视质量而定</td>
+</tr>
+<tr>
+<td>成功指标</td>
+<td>领域≥80%、通用不掉</td>
+<td>业务方签字</td>
+</tr>
+<tr>
+<td>预算风险金</td>
+<td>+20%–30%</td>
+<td>数据返工/重训</td>
+</tr>
+<tr>
+<td>高风险任务</td>
+<td>人工抽检 100%</td>
+<td>医疗/法律/金融</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="07">07 高频踩坑排查</h2>
+<p><strong>坑 1：需求一句话就立项</strong>
+症状：“做个智能客服”没有能力清单，验收全靠吵。
+解法：拆能力清单+每条配验收标准。</p>
+<p><strong>坑 2：路线拍脑袋</strong>
+症状：知识每周更新却选了微调，改一次训一次。
+解法：用决策表/生成器按画像定路线。</p>
+<p><strong>坑 3：跳过数据摸底</strong>
+症状：立项时以为有 10 万条，实际只有 200 条干净的。
+解法：立项前先跑数据盘点（量/质/合规/可获取性）。</p>
+<p><strong>坑 4：无成功指标</strong>
+症状：上线后不知道算不算成功。
+解法：指标写进章程并让业务方签字。</p>
+<p><strong>坑 5：忽视合规</strong>
+症状：用未授权/含 PII 数据训练。
+解法：立项书含合规清单（第 08 章）；高风险任务全人工抽检。</p>
+<p><strong>坑 6：范围蔓延</strong>
+症状：做着做着从问答变成“全公司 AI 平台”。
+解法：PoC 范围写死；新需求进 v2 列表。</p>
+<p><strong>坑 7：时间表是幻想</strong>
+症状：2 周完成“数据+训练+上线”，实际数据就要 3 周。
+解法：按第 41 章流水线与预算反推排期，留风险金。</p>
+<hr />
+<h2 id="08">08 进阶优化：领域落地的进化方向</h2>
+<p><strong>① 领域平台化</strong>：把“数据接入→训练→评测→发布”做成自助平台，新领域只填画像即可启动（第 41 章流水线产品化）。</p>
+<p><strong>② 多领域复用</strong>：共享底座+多 adapter/多知识库，一个平台服务多个业务线（第 14/43 章）。</p>
+<p><strong>③ 评测驱动立项</strong>：立项前先建 50 题“业务验收题”，用现成大模型跑基线——数据不足/期望过高在立项时就暴露。</p>
+<p><strong>④ 成本治理</strong>：按“请求价值”路由大小模型、低峰缩容，把领域模型的单位成本做成可优化的指标。</p>
+<p><strong>⑤ 领域专家进流程</strong>：专家参与数据评审与 PoC 验收，写进项目章程——领域模型没有领域专家就是盲人摸象。</p>
+<hr />
+<h2 id="09-top3">09 本章核心总结（TOP3）</h2>
+<p><strong>TOP1</strong>：立项先拆“能力清单+验收标准”；路线由四问决定（知识变不变/格式要不要/数据有多少/预算多少），用决策表而不是偏好。</p>
+<p><strong>TOP2</strong>：PoC 2–4 周验证最关键假设：基线→种子数据→路线 A/B→Go/No-Go；成功指标让业务方签字，预算留 20%–30% 风险金。</p>
+<p><strong>TOP3</strong>：合规与数据摸底在立项阶段就要做（来源/脱敏/抽检）；项目文档与 PoC 报告是后续迭代的基线资产。</p>
+<hr />
+<h2 id="10">10 连载衔接</h2>
+<p>上一章（第 41 章）建好生产线；本章教你怎么立项、怎么选路线、怎么定义成功——业务与技术的桥搭起来了。</p>
+<p>下一章把规模放大：【第 43 章】高并发生产适配与端侧部署：GPU 池、弹性与端云协同。</p>
+<hr />
+<h2 id="11">11 话题标签与系列目录索引</h2>
+<p>话题标签：<strong>#LLM全栈工程 #领域大模型 #项目立项 #RAG #PoC #工程实战</strong>（Voice前沿 出品，欢迎收藏追更）</p>
+<p><strong>系列目录（46 章，随连载持续更新）</strong></p>
+<p>第 0 阶段·开篇引路
+- 01 一条大模型生产线全程发生了什么
+- 02 2 小时跑通最小闭环
+- 03 预训练到底在练什么</p>
+<p>第 1 阶段·预训练工程·数据核心层
+- 04 数据管道从零构建
+- 05 数据清洗规范与脏数据剔除
+- 06 文本过滤实战
+- 07 数据去重算法
+- 08 敏感数据脱敏
+- 09 数据质量打分体系
+- 10 领域专属数据构建
+- 11 增量预训练方案
+- 12 预训练超参选型与硬件适配
+- 13 断点续训、收敛判断与失败排查</p>
+<p>第 2 阶段·微调与对齐体系
+- 14 全维度微调技术拆解
+- 15 SFT 监督微调实战
+- 16 SFT 数据集构建与标注规范
+- 17 微调模板设计
+- 18 微调超参调优策略
+- 19 过拟合、欠拟合与灾难遗忘
+- 20 微调效果评估体系
+- 21 多轮对话微调专项
+- 22 模型蒸馏实战
+- 23 奖励模型训练
+- 24 RLHF/PPO 工程落地
+- 25 RLAIF：AI 反馈自动对齐
+- 26 小样本与领域自适应微调</p>
+<p>第 3 阶段·基础部署与推理优化
+- 27 部署框架横向对比
+- 28 vLLM 部署实战与参数调优
+- 29 SGLang 高性能推理落地
+- 30 TensorRT-LLM 固化与加速
+- 31 模型量化实操
+- 32 模型剪枝与蒸馏压缩
+- 33 KV Cache 优化与上下文窗口拓展
+- 34 流式推理封装与高并发服务化</p>
+<p>第 4 阶段·高阶推理编译器极致优化
+- 35 推理编译器核心原理
+- 36 算子融合与计算图编译实战
+- 37 动态 shape 与显存编译器优化
+- 38 Speculative Decoding 投机推理进阶
+- 39 批量调度与并行深度适配
+- 40 内核重构与编译级量化</p>
+<p>第 5 阶段·全栈工程联调与项目落地
+- 41 全链路串联：数据到上线一体化流程
+- 42 领域大模型定制化落地（本篇）
+- 43 高并发生产适配与端侧部署
+- 44 模型迭代升级与性能对标评测
+- 45 线上问题闭环排查
+- 46 工程化最佳实践汇总（手册终章）</p>
+<hr />
+<p><em>本文由 Voice前沿 出品 · 转载注明出处 · 下一篇：第 43 章 高并发生产适配与端侧部署</em></p>
+</article>
+<nav class="prevnext"><a href="ch41.html">← 第 41 章 【LLM全栈工程·第41章】全链路串联：数据→训练→对齐→部署的一体化流程</a><a href="ch43.html" style="text-align:right">第 43 章 【LLM全栈工程·第43章】高并发生产适配与端侧部署：GPU 池、弹性与端云协同 →</a></nav>
+</main>
+<footer class="wrap"><p>LLM 全栈工程 · Voice前沿 出品 · 46 章连载 · 收藏即手册</p></footer>
+</body>
+</html>

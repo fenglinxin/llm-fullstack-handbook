@@ -1,0 +1,627 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>【LLM全栈工程·第18章】微调超参调优策略：rank/alpha/lr/epoch 与实验管理 · LLM 全栈工程</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header"><div class="wrap">
+<a class="brand" href="../index.html">LLM 全栈工程<small>LLM 工业级全栈工程落地手册 · 46 章</small></a>
+<nav><a href="../index.html">目录</a><a href="https://github.com/">GitHub 仓库</a></nav>
+</div></header>
+<main class="wrap">
+<nav class="crumbs"><a href="../index.html">全部章节</a> / 【LLM全栈工程·第18章】微调超参调优策略：rank/alpha/lr/epoch 与实验管理</nav>
+<details class="toc-box"><summary>本章目录</summary><div class="toc">
+<ul>
+<li><a href="#_1">单篇内容卡（排版本忽略）</a></li>
+<li><a href="#01">01 开篇导语</a></li>
+<li><a href="#02">02 白话原理：四个旋钮在改什么</a></li>
+<li><a href="#03">03 每个旋钮的手感与参考范围</a></li>
+<li><a href="#04">04 搜索策略与实验管理</a><ul>
+<li><a href="#41">4.1 四种搜索策略</a></li>
+<li><a href="#42">4.2 实验管理五条军规</a></li>
+</ul>
+</li>
+<li><a href="#05-lrrank-12">05 分步实操：LR×Rank 小网格调优（约 1–2 小时）</a><ul>
+<li><a href="#step-1-10">Step 1 先跑一个基线（10 分钟）</a></li>
+<li><a href="#step-2-10">Step 2 写自动扫参脚本（10 分钟）</a></li>
+<li><a href="#step-3-2">Step 3 先干跑生成配置（2 分钟）</a></li>
+<li><a href="#step-4-4-4080">Step 4 跑 4 组实验（40–80 分钟）</a></li>
+<li><a href="#step-5-loss10">Step 5 用评测选最优，而不是只看 loss（10 分钟）</a></li>
+<li><a href="#step-6-10">Step 6 复跑确认 + 归档（10 分钟）</a></li>
+</ul>
+</li>
+<li><a href="#06">06 参数详解：微调调优速查</a></li>
+<li><a href="#07">07 高频踩坑排查</a></li>
+<li><a href="#08">08 进阶优化：调优的进化方向</a></li>
+<li><a href="#09-top3">09 本章核心总结（TOP3）</a></li>
+<li><a href="#10">10 连载衔接</a></li>
+<li><a href="#11">11 话题标签与系列目录索引</a></li>
+</ul>
+</div>
+</details>
+<article class="article">
+<h1 id="llm18rankalphalrepoch">【LLM全栈工程·第18章】微调超参调优策略：rank/alpha/lr/epoch 与实验管理</h1>
+<blockquote>
+<p>本篇为「LLM全栈工程」连载第 18 章（Voice前沿）。主标题以上为准；备选标题（供运营选用，不进正文）：① 同样的数据，为什么别人微调效果更好？超参调优方法论；② LoRA rank/alpha/LR/epoch 到底怎么调：一次只动一个变量；③ 调参不是玄学：实验管理、对比表与搜索策略。</p>
+</blockquote>
+<hr />
+<h2 id="_1">单篇内容卡（排版本忽略）</h2>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>章节定位</td>
+<td>「微调与对齐体系」第 5 篇：把微调超参调优从“玄学”变成“有纪律的实验”</td>
+</tr>
+<tr>
+<td>适用场景</td>
+<td>个人学习（小模型扫参）；小团队微调效果优化；企业模型迭代前的调优 SOP</td>
+</tr>
+<tr>
+<td>核心知识点</td>
+<td>各超参的作用与交互；搜索策略；固定 seed；实验台账与对比表</td>
+</tr>
+<tr>
+<td>技术选型</td>
+<td>手动单变量 vs 网格/随机搜索 vs Optuna 类贝叶斯；WandB/MLflow/本地 CSV</td>
+</tr>
+<tr>
+<td>分步实操</td>
+<td>基线实验 → 生成调优网格 → 自动批量训练 → 解析结果表 → 选最优并归档</td>
+</tr>
+<tr>
+<td>参数详解</td>
+<td>rank/alpha/dropout、LR、epoch、batch、warmup、target modules</td>
+</tr>
+<tr>
+<td>踩坑排查</td>
+<td>同时动多个变量、用 loss 当唯一指标、seed 不固定、网格爆炸、只看最优不看稳定性</td>
+</tr>
+<tr>
+<td>进阶优化</td>
+<td>贝叶斯搜索、早停剪枝、分层 rank、多指标融合选优</td>
+</tr>
+<tr>
+<td>本章 TOP3</td>
+<td>见文末</td>
+</tr>
+<tr>
+<td>下章预告</td>
+<td>第 19 章：过拟合、欠拟合与灾难遗忘</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="01">01 开篇导语</h2>
+<p>数据准备好了、模板验证过了——按下训练按钮，loss 开始下降。然后呢？</p>
+<p>很多人在这里开始“玄学调参”：rank 改成 32 试试、LR 乘个 0.5 试试、epoch 加到 10 试试……跑了一堆实验，最后说不清哪个参数起作用，更说不清为什么。</p>
+<p>超参调优不是碰运气，它有三个隐藏前提：</p>
+<ol>
+<li><strong>你知道每个旋钮在改什么</strong>（容量？步长？训练量？）；</li>
+<li><strong>你一次只动一个变量</strong>（否则结果无法归因）；</li>
+<li><strong>你有实验台账</strong>（配置、seed、指标全记录，能复现能对比）。</li>
+</ol>
+<p>本章先讲透每个超参的“手感”，再给一套可执行的调优流程与自动化脚本——把调参变成流水线，而不是赌博。</p>
+<blockquote>
+<p>一句话记住本章：<strong>调参的目标不是“loss 最低”，而是“评测指标最好且稳定”；没有台账的调参等于没有实验。</strong></p>
+</blockquote>
+<hr />
+<h2 id="02">02 白话原理：四个旋钮在改什么</h2>
+<p>微调超参可以归成四类“力度”：</p>
+<table>
+<thead>
+<tr>
+<th>类别</th>
+<th>旋钮</th>
+<th>在改什么</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>容量</td>
+<td>lora_rank、target modules</td>
+<td>补丁能记多少东西</td>
+</tr>
+<tr>
+<td>步长</td>
+<td>learning_rate、warmup</td>
+<td>每步改多猛</td>
+</tr>
+<tr>
+<td>训练量</td>
+<td>epoch、batch、max_samples</td>
+<td>数据看几遍、每步看多少</td>
+</tr>
+<tr>
+<td>正则</td>
+<td>dropout、weight decay</td>
+<td>防过拟合</td>
+</tr>
+</tbody>
+</table>
+<p><strong>关键交互</strong>：</p>
+<ul>
+<li>rank 小 + LR 大 → 补丁小还猛改，容易震荡；</li>
+<li>rank 大 + 数据少 → 容量过剩，过拟合；</li>
+<li>epoch 多 + 数据少 → 背题；</li>
+<li>LR 大 + 数据脏 → loss spike；</li>
+<li>batch 小 + LR 大 → 梯度噪声大。</li>
+</ul>
+<p>所以调参的顺序建议是：<strong>先定容量（rank/target）→ 再扫 LR → 再调 epoch → 最后用 dropout 微调</strong>，每步只动一个维度。</p>
+<blockquote>
+<p>记忆锚点：<strong>rank 决定“能记多少”，LR 决定“记得多快”，epoch 决定“复习几遍”，dropout 决定“会不会背串”。</strong></p>
+</blockquote>
+<h2 id="03">03 每个旋钮的手感与参考范围</h2>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>参考范围</th>
+<th>手感</th>
+<th>调大/调小的信号</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>lora_rank</td>
+<td>8–64（常见 16–32）</td>
+<td>补丁容量</td>
+<td>领域题学不会→加大；训练 loss 低但通用掉→减小</td>
+</tr>
+<tr>
+<td>lora_alpha</td>
+<td>常 = rank×1~2</td>
+<td>补丁缩放</td>
+<td>跟随 rank；单独调的效果弱于 rank</td>
+</tr>
+<tr>
+<td>lora_dropout</td>
+<td>0–0.1</td>
+<td>防过拟合</td>
+<td>val 掉点→加大到 0.1</td>
+</tr>
+<tr>
+<td>learning_rate</td>
+<td>LoRA 1e-4~3e-4；全参 1e-5~2e-5</td>
+<td>步长</td>
+<td>loss 震荡→减小；收敛太慢→加大</td>
+</tr>
+<tr>
+<td>num_train_epochs</td>
+<td>1–5（小数据 3–5）</td>
+<td>复习遍数</td>
+<td>val loss 回升→减小/早停</td>
+</tr>
+<tr>
+<td>batch（等效）</td>
+<td>16–64</td>
+<td>梯度质量</td>
+<td>锯齿严重→加大或降 LR</td>
+</tr>
+<tr>
+<td>warmup_ratio</td>
+<td>0.03–0.1</td>
+<td>起步稳定</td>
+<td>起步 spike→加大</td>
+</tr>
+<tr>
+<td>cutoff_len</td>
+<td>512–4096</td>
+<td>看多长</td>
+<td>回答被截→加大</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>两个高频误判：<strong>loss 不降就加 rank</strong>（其实先查 LR 与数据）；<strong>效果不行就加 epoch</strong>（其实先查数据与模板）。先归因，再动手。</p>
+</blockquote>
+<hr />
+<h2 id="04">04 搜索策略与实验管理</h2>
+<h3 id="41">4.1 四种搜索策略</h3>
+<table>
+<thead>
+<tr>
+<th>策略</th>
+<th>做法</th>
+<th>成本</th>
+<th>适合</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>手动单变量</td>
+<td>一次改一个</td>
+<td>低</td>
+<td>起步必做</td>
+</tr>
+<tr>
+<td>网格搜索</td>
+<td>每个参数取几个值全组合</td>
+<td>中（组合爆炸）</td>
+<td>参数少、预算足</td>
+</tr>
+<tr>
+<td>随机搜索</td>
+<td>在范围内随机采样</td>
+<td>低中</td>
+<td>参数多时比网格高效</td>
+</tr>
+<tr>
+<td>贝叶斯（Optuna 类）</td>
+<td>根据历史结果推荐下一组</td>
+<td>中</td>
+<td>预算有限、参数多</td>
+</tr>
+</tbody>
+</table>
+<h3 id="42">4.2 实验管理五条军规</h3>
+<ol>
+<li><strong>固定 seed</strong>：同一配置跑两次要能复现（或至少差异远小于参数差异）；</li>
+<li><strong>一次一变量</strong>：网格里每个对比只差一个维度；</li>
+<li><strong>全量记录</strong>：配置 hash、数据版本、seed、指标、checkpoint 路径；</li>
+<li><strong>评测驱动</strong>：对比用 held-out 评测分，不只用 loss；</li>
+<li><strong>最优要复跑</strong>：网格最优配置用新 seed 复跑 2–3 次，取均值——防止“踩中好随机”。</li>
+</ol>
+<blockquote>
+<p>工具层面：小团队用“CSV 台账 + Git tag”，规模上来用 WandB/MLflow（自动记录配置与曲线）；关键是<strong>记录本身</strong>，不是工具品牌。</p>
+</blockquote>
+<h2 id="05-lrrank-12">05 分步实操：LR×Rank 小网格调优（约 1–2 小时）</h2>
+<p>沿用 llm-demo 的 sft_train 数据与 Qwen2.5-7B-Instruct。</p>
+<h3 id="step-1-10">Step 1 先跑一个基线（10 分钟）</h3>
+<p>用第 15 章 configs/sft_industrial.yaml（lr=2e-4、rank=16、epochs=5）训练并记录 held-out 评测分，作为后续所有对比的参照。<strong>没有基线的调参，无法判断“变好还是变坏”。</strong></p>
+<h3 id="step-2-10">Step 2 写自动扫参脚本（10 分钟）</h3>
+<p>保存 scripts/run_ft_sweep.py：</p>
+<pre><code class="language-python"># scripts/run_ft_sweep.py —— 小网格扫参：生成配置-&gt;训练-&gt;解析结果-&gt;CSV
+# 用法：python run_ft_sweep.py --dry-run   （只生成配置）
+#       python run_ft_sweep.py             （逐个真实训练）
+import csv
+import json
+import pathlib
+import subprocess
+import sys
+
+root = pathlib.Path(__file__).resolve().parent.parent
+sweep_dir = root / &quot;configs&quot; / &quot;sweep&quot;
+sweep_dir.mkdir(parents=True, exist_ok=True)
+
+GRID = [
+    {&quot;name&quot;: &quot;sweep_1&quot;, &quot;lr&quot;: 1e-4, &quot;rank&quot;: 8, &quot;epochs&quot;: 3},
+    {&quot;name&quot;: &quot;sweep_2&quot;, &quot;lr&quot;: 1e-4, &quot;rank&quot;: 16, &quot;epochs&quot;: 3},
+    {&quot;name&quot;: &quot;sweep_3&quot;, &quot;lr&quot;: 2e-4, &quot;rank&quot;: 8, &quot;epochs&quot;: 3},
+    {&quot;name&quot;: &quot;sweep_4&quot;, &quot;lr&quot;: 2e-4, &quot;rank&quot;: 16, &quot;epochs&quot;: 3},
+]
+
+TPL = &quot;&quot;&quot;model_name_or_path: models/Qwen2.5-7B-Instruct
+template: qwen
+stage: sft
+finetuning_type: lora
+dataset_dir: data
+dataset: sft_train
+val_size: 0.2
+cutoff_len: 1024
+per_device_train_batch_size: 2
+per_device_eval_batch_size: 2
+gradient_accumulation_steps: 8
+learning_rate: __LR__
+num_train_epochs: __EPOCHS__
+lr_scheduler_type: cosine
+warmup_ratio: 0.1
+bf16: true
+seed: 42
+eval_strategy: steps
+eval_steps: 10
+logging_steps: 5
+save_steps: 20
+lora_rank: __RANK__
+lora_alpha: __ALPHA__
+lora_dropout: 0.05
+output_dir: outputs/__NAME__
+plot_loss: true
+&quot;&quot;&quot;
+
+def make_yaml(cfg):
+    text = TPL.replace(&quot;__LR__&quot;, repr(cfg[&quot;lr&quot;]))
+    text = text.replace(&quot;__RANK__&quot;, str(cfg[&quot;rank&quot;]))
+    text = text.replace(&quot;__ALPHA__&quot;, str(cfg[&quot;rank&quot;] * 2))
+    text = text.replace(&quot;__EPOCHS__&quot;, str(cfg[&quot;epochs&quot;]))
+    text = text.replace(&quot;__NAME__&quot;, cfg[&quot;name&quot;])
+    path = sweep_dir / (cfg[&quot;name&quot;] + &quot;.yaml&quot;)
+    path.write_text(text, encoding=&quot;utf-8&quot;)
+    return path
+
+def read_last_losses(name):
+    state_path = root / &quot;outputs&quot; / name / &quot;trainer_state.json&quot;
+    if not state_path.exists():
+        return None, None
+    data = json.loads(state_path.read_text(encoding=&quot;utf-8&quot;))
+    last_loss = None
+    last_eval = None
+    for h in data.get(&quot;log_history&quot;, []):
+        if &quot;loss&quot; in h and &quot;eval_loss&quot; not in h:
+            last_loss = h[&quot;loss&quot;]
+        if &quot;eval_loss&quot; in h:
+            last_eval = h[&quot;eval_loss&quot;]
+    return last_loss, last_eval
+
+dry = &quot;--dry-run&quot; in sys.argv
+rows = []
+for cfg in GRID:
+    yaml_path = make_yaml(cfg)
+    if dry:
+        print(&quot;[dry-run]&quot;, yaml_path)
+        continue
+    print(&quot;train:&quot;, cfg[&quot;name&quot;])
+    subprocess.run([&quot;llamafactory-cli&quot;, &quot;train&quot;, str(yaml_path)], check=True)
+    loss, eval_loss = read_last_losses(cfg[&quot;name&quot;])
+    rows.append({&quot;name&quot;: cfg[&quot;name&quot;], &quot;lr&quot;: cfg[&quot;lr&quot;], &quot;rank&quot;: cfg[&quot;rank&quot;],
+                 &quot;epochs&quot;: cfg[&quot;epochs&quot;], &quot;last_loss&quot;: loss, &quot;last_eval_loss&quot;: eval_loss})
+
+if not dry:
+    out_csv = root / &quot;logs&quot; / &quot;ft_sweep_results.csv&quot;
+    with open(out_csv, &quot;w&quot;, newline=&quot;&quot;, encoding=&quot;utf-8&quot;) as f:
+        writer = csv.DictWriter(f, fieldnames=[&quot;name&quot;, &quot;lr&quot;, &quot;rank&quot;, &quot;epochs&quot;, &quot;last_loss&quot;, &quot;last_eval_loss&quot;])
+        writer.writeheader()
+        writer.writerows(rows)
+    print(&quot;results -&gt;&quot;, out_csv)
+</code></pre>
+<h3 id="step-3-2">Step 3 先干跑生成配置（2 分钟）</h3>
+<pre><code class="language-bash">python scripts/run_ft_sweep.py --dry-run
+ls configs/sweep/
+cat configs/sweep/sweep_1.yaml
+</code></pre>
+<p>确认生成的 YAML 与第 15 章配置一致（只差 lr/rank/epochs），再开始真实训练。</p>
+<h3 id="step-4-4-4080">Step 4 跑 4 组实验（40–80 分钟）</h3>
+<pre><code class="language-bash">python scripts/run_ft_sweep.py
+cat logs/ft_sweep_results.csv
+</code></pre>
+<blockquote>
+<p>如果时间有限，可把 GRID 临时减到 2 组（只对比 lr），跑通流程后再扩网格——流程的价值在于“可重复、可对比”，不在于一次跑多少组。</p>
+</blockquote>
+<h3 id="step-5-loss10">Step 5 用评测选最优，而不是只看 loss（10 分钟）</h3>
+<ol>
+<li>把 4 个输出分别 export 合并（或直接带 adapter 评测）；</li>
+<li>用第 15 章 sft_eval.py 对每个模型跑 held-out 领域题+通用题；</li>
+<li>把评测分合并进结果表：</li>
+</ol>
+<table>
+<thead>
+<tr>
+<th>实验</th>
+<th>lr</th>
+<th>rank</th>
+<th>last_loss</th>
+<th>val_loss</th>
+<th>领域题</th>
+<th>通用题</th>
+<th>结论</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>sweep_1</td>
+<td>1e-4</td>
+<td>8</td>
+<td>?</td>
+<td>?</td>
+<td>?</td>
+<td>?</td>
+<td>?</td>
+</tr>
+<tr>
+<td>sweep_2</td>
+<td>1e-4</td>
+<td>16</td>
+<td>?</td>
+<td>?</td>
+<td>?</td>
+<td>?</td>
+<td>?</td>
+</tr>
+<tr>
+<td>sweep_3</td>
+<td>2e-4</td>
+<td>8</td>
+<td>?</td>
+<td>?</td>
+<td>?</td>
+<td>?</td>
+<td>?</td>
+</tr>
+<tr>
+<td>sweep_4</td>
+<td>2e-4</td>
+<td>16</td>
+<td>?</td>
+<td>?</td>
+<td>?</td>
+<td>?</td>
+<td>?</td>
+</tr>
+</tbody>
+</table>
+<ol start="4">
+<li>选择标准：<strong>领域题最高且通用题不掉</strong>；如果并列，选训练更快的；如果最优配置的 loss 表现与次优差异极小，优先选更简单的（rank 小的）。</li>
+</ol>
+<h3 id="step-6-10">Step 6 复跑确认 + 归档（10 分钟）</h3>
+<p>对最优配置换 seed（如 43、44）复跑两次，确认结果稳定（波动明显时说明数据太少或 LR 太大）；然后：</p>
+<pre><code class="language-bash">cd llm-demo
+git add configs outputs logs scripts
+git commit -m &quot;ft-sweep: lr x rank grid (see ft_sweep_results.csv), best=sweep_X&quot;
+git tag ft-sweep-v1
+</code></pre>
+<blockquote>
+<p>生产提示：把“基线→网格→评测→复跑确认”沉淀为团队标准流程，任何模型迭代都走同一套——这才是调参经验的真正资产。</p>
+</blockquote>
+<h2 id="06">06 参数详解：微调调优速查</h2>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>起步值</th>
+<th>搜索范围</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>lora_rank</td>
+<td>16</td>
+<td>8/16/32/64</td>
+<td>容量；先 rank 后其他</td>
+</tr>
+<tr>
+<td>lora_alpha</td>
+<td>32</td>
+<td>rank×1~2</td>
+<td>跟随 rank，少单独调</td>
+</tr>
+<tr>
+<td>lora_dropout</td>
+<td>0.05</td>
+<td>0/0.05/0.1</td>
+<td>val 掉点才加</td>
+</tr>
+<tr>
+<td>learning_rate</td>
+<td>2e-4</td>
+<td>1e-4/2e-4/3e-4（LoRA）</td>
+<td>第二个要扫的维度</td>
+</tr>
+<tr>
+<td>num_train_epochs</td>
+<td>3</td>
+<td>2/3/5</td>
+<td>小数据别超 5</td>
+</tr>
+<tr>
+<td>等效 batch</td>
+<td>16–32</td>
+<td>16/32/64</td>
+<td>锯齿大就加大</td>
+</tr>
+<tr>
+<td>warmup_ratio</td>
+<td>0.1</td>
+<td>0.03/0.1</td>
+<td>起步 spike 才调</td>
+</tr>
+<tr>
+<td>seed</td>
+<td>42</td>
+<td>复跑用 43/44</td>
+<td>验证稳定性</td>
+</tr>
+</tbody>
+</table>
+<p><strong>调参顺序模板</strong>：基线（rank16/lr2e-4/ep3）→ 扫 rank（8/16/32）→ 固定最优 rank 扫 lr → 固定前两者调 epoch → 最后用 dropout 微调。每一步对照 held-out 评测，而不是 loss。</p>
+<hr />
+<h2 id="07">07 高频踩坑排查</h2>
+<p><strong>坑 1：同时动三个参数</strong>
+症状：实验 A（lr×2+rank×2+epoch×2）效果变好，但不知道是谁的功劳。
+解法：一次只动一个变量；网格里每个对比只差一个维度。</p>
+<p><strong>坑 2：用训练 loss 当唯一指标</strong>
+症状：loss 最低的实验上线效果一般。
+解法：以 held-out 领域题+通用题为准；loss 只用来判断“是否收敛/过拟合”。</p>
+<p><strong>坑 3：seed 不固定</strong>
+症状：同一配置两次结果差很多，无法判断参数作用。
+解法：固定 seed；最优配置换 seed 复跑取均值。</p>
+<p><strong>坑 4：网格爆炸</strong>
+症状：5 参数×5 值=3125 组，预算根本不够。
+解法：先单变量粗扫缩小范围，再小网格精扫；或上随机/贝叶斯搜索。</p>
+<p><strong>坑 5：只盯着“最优一组”</strong>
+症状：最优实验其实只比次优高 0.5%，但复杂一倍。
+解法：看整张结果表的趋势（lr 升/降方向、rank 影响），选“简单且稳定”的配置。</p>
+<p><strong>坑 6：忽略数据版本</strong>
+症状：扫参中途偷偷换了数据集，结果表全部失真。
+解法：每个实验记录数据版本+配置 hash；数据变更必须重跑基线。</p>
+<p><strong>坑 7：不设早停就拉满 epoch</strong>
+症状：epoch=10 跑完，val loss 第 3 轮就开始回升。
+解法：盯 val loss/评测，用中间最优 checkpoint，不必跑满。</p>
+<hr />
+<h2 id="08">08 进阶优化：调优的进化方向</h2>
+<p><strong>① 贝叶斯搜索（Optuna 类）</strong>：把“下一组试什么”交给优化器，按历史结果推荐参数；配合“早停剪枝”在差配置上提前止损，同样的预算能探索 3–5 倍空间。</p>
+<p><strong>② 分层 rank</strong>：不是所有层都需要 rank 16——离输出近的层对格式影响大，可给高 rank；用分层配置在总参数量不变时提升效果。</p>
+<p><strong>③ 多指标融合选优</strong>：领域分、通用分、格式合规、推理速度合成一个“综合分”，避免单指标过拟合（第 20 章评估体系会给权重模板）。</p>
+<p><strong>④ 小步快跑 + 放大</strong>：先在 1B 模型上把参数趋势摸清（哪个方向有效），再在 7B 上精调——大模型上的实验预算留给“确认”，不留给“探索”。</p>
+<p><strong>⑤ 自动实验台账</strong>：训练启动时自动记录 Git commit、数据版本、配置 hash、seed、开始时间，结束时自动写入结果表——人工记录一定会漏，自动化不会。</p>
+<hr />
+<h2 id="09-top3">09 本章核心总结（TOP3）</h2>
+<p><strong>TOP1</strong>：超参分四类力度：容量（rank/target）、步长（LR/warmup）、训练量（epoch/batch）、正则（dropout）；调参顺序 = 定容量 → 扫 LR → 调 epoch → 微调正则。</p>
+<p><strong>TOP2</strong>：实验管理五军规：固定 seed、一次一变量、全量记录、评测驱动、最优复跑——没有台账的调参等于没有实验。</p>
+<p><strong>TOP3</strong>：用“结果表趋势”而不是“最优一组”做决策：看参数方向与稳定性，选简单且稳的配置；数据版本变更必须重跑基线。</p>
+<hr />
+<h2 id="10">10 连载衔接</h2>
+<p>上一章（第 17 章）解决了模板问题；本章建立了调参纪律与自动扫参工具——主线工程的 SFT 从“跑一次”进入“可系统优化”阶段。</p>
+<p>下一章处理微调最常见的翻车现场：【第 19 章】过拟合、欠拟合与灾难遗忘：症状、归因与解法。loss 曲线会说话，但你要先学会听。</p>
+<hr />
+<h2 id="11">11 话题标签与系列目录索引</h2>
+<p>话题标签：<strong>#LLM全栈工程 #超参调优 #LoRA #实验管理 #微调 #工程实战</strong>（Voice前沿 出品，欢迎收藏追更）</p>
+<p><strong>系列目录（46 章，随连载持续更新）</strong></p>
+<p>第 0 阶段·开篇引路
+- 01 一条大模型生产线全程发生了什么
+- 02 2 小时跑通最小闭环
+- 03 预训练到底在练什么</p>
+<p>第 1 阶段·预训练工程·数据核心层
+- 04 数据管道从零构建
+- 05 数据清洗规范与脏数据剔除
+- 06 文本过滤实战
+- 07 数据去重算法
+- 08 敏感数据脱敏
+- 09 数据质量打分体系
+- 10 领域专属数据构建
+- 11 增量预训练方案
+- 12 预训练超参选型与硬件适配
+- 13 断点续训、收敛判断与失败排查</p>
+<p>第 2 阶段·微调与对齐体系
+- 14 全维度微调技术拆解
+- 15 SFT 监督微调实战
+- 16 SFT 数据集构建与标注规范
+- 17 微调模板设计
+- 18 微调超参调优策略（本篇）
+- 19 过拟合、欠拟合与灾难遗忘
+- 20 微调效果评估体系
+- 21 多轮对话微调专项
+- 22 模型蒸馏实战
+- 23 奖励模型训练
+- 24 RLHF/PPO 工程落地
+- 25 RLAIF：AI 反馈自动对齐
+- 26 小样本与领域自适应微调</p>
+<p>第 3 阶段·基础部署与推理优化
+- 27 部署框架横向对比
+- 28 vLLM 部署实战与参数调优
+- 29 SGLang 高性能推理落地
+- 30 TensorRT-LLM 固化与加速
+- 31 模型量化实操
+- 32 模型剪枝与蒸馏压缩
+- 33 KV Cache 优化与上下文窗口拓展
+- 34 流式推理封装与高并发服务化</p>
+<p>第 4 阶段·高阶推理编译器极致优化
+- 35 推理编译器核心原理
+- 36 算子融合与计算图编译
+- 37 动态 shape 与显存编译器优化
+- 38 Speculative Decoding 投机推理进阶
+- 39 批量调度与并行深度适配
+- 40 内核重构与编译级量化</p>
+<p>第 5 阶段·全栈工程联调与项目落地
+- 41 全链路串联：数据到上线一体化流程
+- 42 领域大模型定制化落地
+- 43 高并发生产适配与端侧部署
+- 44 模型迭代升级与性能对标评测
+- 45 线上问题闭环排查
+- 46 工程化最佳实践汇总（手册终章）</p>
+<hr />
+<p><em>本文由 Voice前沿 出品 · 转载注明出处 · 下一篇：第 19 章 过拟合、欠拟合与灾难遗忘</em></p>
+</article>
+<nav class="prevnext"><a href="ch17.html">← 第 17 章 【LLM全栈工程·第17章】微调模板设计：Chat Template、角色设定与多轮拼接</a><a href="ch19.html" style="text-align:right">第 19 章 【LLM全栈工程·第19章】过拟合、欠拟合与灾难遗忘：症状、归因与解法 →</a></nav>
+</main>
+<footer class="wrap"><p>LLM 全栈工程 · Voice前沿 出品 · 46 章连载 · 收藏即手册</p></footer>
+</body>
+</html>

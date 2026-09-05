@@ -1,0 +1,476 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>【LLM全栈工程·第30章】TensorRT-LLM 固化与加速：从权重到 Engine · LLM 全栈工程</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header"><div class="wrap">
+<a class="brand" href="../index.html">LLM 全栈工程<small>LLM 工业级全栈工程落地手册 · 46 章</small></a>
+<nav><a href="../index.html">目录</a><a href="https://github.com/">GitHub 仓库</a></nav>
+</div></header>
+<main class="wrap">
+<nav class="crumbs"><a href="../index.html">全部章节</a> / 【LLM全栈工程·第30章】TensorRT-LLM 固化与加速：从权重到 Engine</nav>
+<details class="toc-box"><summary>本章目录</summary><div class="toc">
+<ul>
+<li><a href="#_1">单篇内容卡（排版本忽略）</a></li>
+<li><a href="#01">01 开篇导语</a></li>
+<li><a href="#02-engine">02 白话原理：Engine 是什么</a><ul>
+<li><a href="#21-vs-engine">2.1 权重 vs Engine</a></li>
+<li><a href="#22">2.2 构建期做了什么</a></li>
+<li><a href="#23-shape">2.3 动态 shape 的处理</a></li>
+</ul>
+</li>
+<li><a href="#03">03 什么时候值得“固化”</a></li>
+<li><a href="#04-convert-build-serve">04 标准流程：convert → build → serve</a><ul>
+<li><a href="#41">4.1 环境：官方容器最稳</a></li>
+<li><a href="#42-checkpointhf-trt">4.2 转换 checkpoint（HF → TRT 格式）</a></li>
+<li><a href="#43-engine">4.3 构建 engine</a></li>
+<li><a href="#44-trtllm-bench">4.4 性能验证（trtllm-bench）</a></li>
+<li><a href="#45">4.5 部署</a></li>
+</ul>
+</li>
+<li><a href="#05-helpdesk-12">05 分步实操：固化 helpdesk 模型（约 1–2 小时，含构建）</a><ul>
+<li><a href="#step-1-5">Step 1 生成流程命令（5 分钟）</a></li>
+<li><a href="#step-2-4090">Step 2 在官方容器里执行（40–90 分钟）</a></li>
+<li><a href="#step-3-15">Step 3 性能对比与质量回归（15 分钟）</a></li>
+<li><a href="#step-4">Step 4 制品归档</a></li>
+</ul>
+</li>
+<li><a href="#06">06 参数详解：构建参数速查</a></li>
+<li><a href="#07">07 高频踩坑排查</a></li>
+<li><a href="#08-trt-llm">08 进阶优化：TRT-LLM 的进化方向</a></li>
+<li><a href="#09-top3">09 本章核心总结（TOP3）</a></li>
+<li><a href="#10">10 连载衔接</a></li>
+<li><a href="#11">11 话题标签与系列目录索引</a></li>
+</ul>
+</div>
+</details>
+<article class="article">
+<h1 id="llm30tensorrt-llm-engine">【LLM全栈工程·第30章】TensorRT-LLM 固化与加速：从权重到 Engine</h1>
+<blockquote>
+<p>本篇为「LLM全栈工程」连载第 30 章（Voice前沿）。主标题以上为准；备选标题（供运营选用，不进正文）：① NVIDIA 上的终极时延：TensorRT-LLM 从转换到 Engine；② 权重≠可用的快模型：TRT Engine 构建全流程；③ 固化一次、收益长期：TensorRT-LLM 实战与避坑。</p>
+</blockquote>
+<hr />
+<h2 id="_1">单篇内容卡（排版本忽略）</h2>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>章节定位</td>
+<td>「基础部署与推理优化」第 4 篇：TensorRT-LLM 的转换、构建、验证与部署</td>
+</tr>
+<tr>
+<td>适用场景</td>
+<td>个人学习（NVIDIA 单卡实验）；小团队极致时延；企业 NVIDIA 生产推理</td>
+</tr>
+<tr>
+<td>核心知识点</td>
+<td>Engine 与权重的区别；convert→build→serve 流程；plugin/动态 shape；版本与 GPU 绑定</td>
+</tr>
+<tr>
+<td>技术选型</td>
+<td>TRT-LLM vs vLLM/SGLang；何时值得“固化”</td>
+</tr>
+<tr>
+<td>分步实操</td>
+<td>官方容器 → 转换 checkpoint → 构建 engine → trtllm-bench 验证 → Triton 部署 → 质量回归</td>
+</tr>
+<tr>
+<td>参数详解</td>
+<td>dtype/max_input_len/max_seq_len/max_batch_size/tp/pp/plugin 开关</td>
+</tr>
+<tr>
+<td>踩坑排查</td>
+<td>版本错配、GPU 架构不匹配、build OOM、engine 绑卡、跳过质量回归</td>
+</tr>
+<tr>
+<td>进阶优化</td>
+<td>FP8/INT4、in-flight batching、多 engine 路由、PD 演进（后章）</td>
+</tr>
+<tr>
+<td>本章 TOP3</td>
+<td>见文末</td>
+</tr>
+<tr>
+<td>下章预告</td>
+<td>第 31 章：模型量化实操</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="01">01 开篇导语</h2>
+<p>vLLM/SGLang 是“通用引擎”：加载权重、动态调度，灵活但仍有运行时开销。TensorRT-LLM 换了一条路：<strong>把模型连同目标硬件、目标 shape、目标精度一起“编译固化”成专属 engine</strong>——算子融合、kernel 自动调优都在构建期完成，推理时只剩最精简的执行。</p>
+<p>收益：同硬件下时延/吞吐常再上一个台阶，FP8/INT4 支持成熟，是大厂 NVIDIA 生产推理的常见选择。</p>
+<p>代价：只能 NVIDIA；engine 与 GPU 架构、TRT 版本强绑定；模型一换、参数一改就要重新构建；构建本身耗时且吃显存。</p>
+<p>本章走完“权重 → engine → 服务”的完整流程，并给出“什么时候值得固化”的判断标准。</p>
+<blockquote>
+<p>一句话记住本章：<strong>TRT-LLM 是用“构建期的慢”换“推理期的快”；engine 是绑定硬件与版本的制品，必须版本化管理并做质量回归。</strong></p>
+</blockquote>
+<hr />
+<h2 id="02-engine">02 白话原理：Engine 是什么</h2>
+<h3 id="21-vs-engine">2.1 权重 vs Engine</h3>
+<table>
+<thead>
+<tr>
+<th>制品</th>
+<th>是什么</th>
+<th>特点</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>权重（HF 格式）</td>
+<td>模型参数</td>
+<td>通用、可训练、慢一步</td>
+</tr>
+<tr>
+<td>Checkpoint（TRT 格式）</td>
+<td>转换后的权重+配置</td>
+<td>中间产物</td>
+</tr>
+<tr>
+<td>Engine</td>
+<td>编译后的可执行图</td>
+<td>绑定 GPU/版本、最快</td>
+</tr>
+</tbody>
+</table>
+<h3 id="22">2.2 构建期做了什么</h3>
+<ol>
+<li><strong>图优化</strong>：算子融合（QKV、MLP、Norm+量化等）；</li>
+<li><strong>kernel 自动调优</strong>：同一算子试多种实现选最快；</li>
+<li><strong>显存规划</strong>：按 max batch/len 预分配；</li>
+<li><strong>量化落图</strong>：FP8/INT4 权重直接编进 engine。</li>
+</ol>
+<h3 id="23-shape">2.3 动态 shape 的处理</h3>
+<p>请求长度会变，engine 用“优化档位（profile）”支持动态范围：构建时声明 min/opt/max 三档（如输入 1/512/4096），运行时在该范围内动态适配——档位设计影响性能，别只设一个最大值。</p>
+<blockquote>
+<p>记忆锚点：<strong>权重是“菜谱”，engine 是“按你家厨房定制好的半成品”</strong>——换厨房（GPU/驱动/版本）就得重新定制。</p>
+</blockquote>
+<h2 id="03">03 什么时候值得“固化”</h2>
+<table>
+<thead>
+<tr>
+<th>场景</th>
+<th>建议</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>模型固定、流量大、NVIDIA</td>
+<td>值得：收益长期摊薄构建成本</td>
+</tr>
+<tr>
+<td>模型频繁迭代（每周换）</td>
+<td>谨慎：每次重 build</td>
+</tr>
+<tr>
+<td>需要动态换模型/多 adapter</td>
+<td>vLLM 更灵活</td>
+</tr>
+<tr>
+<td>边缘/非 NVIDIA</td>
+<td>别用 TRT-LLM</td>
+</tr>
+<tr>
+<td>极致时延 SLA</td>
+<td>值得：同卡通常最优</td>
+</tr>
+</tbody>
+</table>
+<p><strong>判断公式</strong>：构建成本 × 迭代频率 &lt; 性能收益 × 服务时长 时，才固化。</p>
+<hr />
+<h2 id="04-convert-build-serve">04 标准流程：convert → build → serve</h2>
+<h3 id="41">4.1 环境：官方容器最稳</h3>
+<p>TRT-LLM 对版本极其敏感，强烈建议直接用官方 Docker 镜像（tag 以 NVIDIA 文档当日为准）：</p>
+<pre><code class="language-bash">docker run --gpus all -it --shm-size=16g \
+  -v /d/software/公众号/llm-demo:/workspace \
+  nvcr.io/nvidia/tensorrt-llm:&lt;版本tag&gt;   # 以官方镜像仓库为准
+cd /workspace
+</code></pre>
+<h3 id="42-checkpointhf-trt">4.2 转换 checkpoint（HF → TRT 格式）</h3>
+<pre><code class="language-bash">python examples/llama/convert_checkpoint.py \
+  --model_dir models/helpdesk-sft-merged \
+  --output_dir tllm_checkpoint/helpdesk \
+  --dtype bfloat16 \
+  --tp_size 1
+</code></pre>
+<h3 id="43-engine">4.3 构建 engine</h3>
+<pre><code class="language-bash">trtllm-build \
+  --checkpoint_dir tllm_checkpoint/helpdesk \
+  --output_dir engine/helpdesk \
+  --gemm_plugin auto \
+  --max_input_len 4096 \
+  --max_seq_len 8192 \
+  --max_batch_size 64 \
+  --use_fused_mlp
+</code></pre>
+<p>构建成功后会生成 engine 目录（含 config.json 与 engine 文件）。</p>
+<blockquote>
+<p>不同模型架构（Qwen/Llama 等）使用对应 convert 脚本；以官方 examples 为准。构建时显存不足可加 --workers 或分档构建。</p>
+</blockquote>
+<h3 id="44-trtllm-bench">4.4 性能验证（trtllm-bench）</h3>
+<pre><code class="language-bash">trtllm-bench latency \
+  --model helpdesk \
+  --engine_dir engine/helpdesk \
+  --batch_size 1 \
+  --input_output_len &quot;128,128&quot;
+
+trtllm-bench throughput \
+  --model helpdesk \
+  --engine_dir engine/helpdesk \
+  --batch_size 32 \
+  --input_output_len &quot;128,256&quot;
+</code></pre>
+<p>记录结果（TTFT/TPOT/吞吐）并与第 27/28 章的 vLLM 数据对比（同精度同 shape 才公平）。</p>
+<h3 id="45">4.5 部署</h3>
+<p>生产部署通常走 Triton Inference Server（TensorRT-LLM Backend）：把 engine 放进 model repo，配 config.pbtxt 起服务；小规模也可用官方 Python 示例封装 HTTP。具体编排命令随 Triton 版本变化，以官方文档为准。</p>
+<h2 id="05-helpdesk-12">05 分步实操：固化 helpdesk 模型（约 1–2 小时，含构建）</h2>
+<h3 id="step-1-5">Step 1 生成流程命令（5 分钟）</h3>
+<p>保存 scripts/gen_trtllm_cmds.py：</p>
+<pre><code class="language-python"># scripts/gen_trtllm_cmds.py —— 输出 TRT-LLM convert/build/bench 命令模板
+MODEL = &quot;models/helpdesk-sft-merged&quot;
+CKPT = &quot;tllm_checkpoint/helpdesk&quot;
+ENGINE = &quot;engine/helpdesk&quot;
+
+print(&quot;== 1. 转换 checkpoint ==&quot;)
+print(&quot;python examples/llama/convert_checkpoint.py \\&quot;)
+print(&quot;  --model_dir &quot; + MODEL + &quot; \\&quot;)
+print(&quot;  --output_dir &quot; + CKPT + &quot; \\&quot;)
+print(&quot;  --dtype bfloat16 --tp_size 1&quot;)
+print()
+print(&quot;== 2. 构建 engine ==&quot;)
+print(&quot;trtllm-build \\&quot;)
+print(&quot;  --checkpoint_dir &quot; + CKPT + &quot; \\&quot;)
+print(&quot;  --output_dir &quot; + ENGINE + &quot; \\&quot;)
+print(&quot;  --gemm_plugin auto --max_input_len 4096 \\&quot;)
+print(&quot;  --max_seq_len 8192 --max_batch_size 64 --use_fused_mlp&quot;)
+print()
+print(&quot;== 3. 性能验证 ==&quot;)
+print(&quot;trtllm-bench latency --model helpdesk --engine_dir &quot; + ENGINE + &quot; --batch_size 1 --input_output_len 128,128&quot;)
+print(&quot;trtllm-bench throughput --model helpdesk --engine_dir &quot; + ENGINE + &quot; --batch_size 32 --input_output_len 128,256&quot;)
+</code></pre>
+<p>运行：</p>
+<pre><code class="language-bash">python scripts/gen_trtllm_cmds.py
+</code></pre>
+<h3 id="step-2-4090">Step 2 在官方容器里执行（40–90 分钟）</h3>
+<ol>
+<li>按 4.1 起官方容器并挂载 llm-demo；</li>
+<li>依次执行 Step 1 生成的三组命令；</li>
+<li>构建期观察显存：OOM 时降 max_batch_size/max_seq_len，或加 --workers 分块；</li>
+<li>记录构建耗时与 engine 大小（作为版本化制品）。</li>
+</ol>
+<h3 id="step-3-15">Step 3 性能对比与质量回归（15 分钟）</h3>
+<ol>
+<li>用 trtllm-bench 的 latency/throughput 结果与第 28 章 vLLM 同精度结果对比；</li>
+<li><strong>质量回归必做</strong>：engine 的数值精度与框架版本相关，用固定 20 题跑一遍“输出 diff/关键词命中”，确认构建没有引入质量回退（如 plugin 精度问题）；</li>
+<li>部署到 Triton 后用同一组评测题做端到端回归（流程见 4.5）。</li>
+</ol>
+<h3 id="step-4">Step 4 制品归档</h3>
+<p>engine 与 GPU 架构/TRT 版本强绑定，归档时记录：</p>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>模型版本</td>
+<td>helpdesk-sft v1</td>
+</tr>
+<tr>
+<td>TRT-LLM/TensorRT 版本</td>
+<td>?</td>
+</tr>
+<tr>
+<td>GPU 型号/驱动</td>
+<td>?</td>
+</tr>
+<tr>
+<td>构建参数</td>
+<td>dtype/max len/tp</td>
+</tr>
+<tr>
+<td>engine sha256</td>
+<td>?</td>
+</tr>
+<tr>
+<td>性能与质量回归报告</td>
+<td>logs/trtllm_report.md</td>
+</tr>
+</tbody>
+</table>
+<pre><code class="language-bash">cd llm-demo
+git add scripts logs
+git commit -m &quot;trtllm: engine build v1 (bf16) + bench + parity report&quot;
+git tag trtllm-v1
+</code></pre>
+<blockquote>
+<p>提示：engine 文件通常很大且不适合进 Git，放制品库（对象存储/模型仓库）并记录哈希；代码仓库只存“如何构建”的脚本与参数。</p>
+</blockquote>
+<h2 id="06">06 参数详解：构建参数速查</h2>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>作用</th>
+<th>参考</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>--dtype</td>
+<td>engine 精度</td>
+<td>bfloat16 起步；fp8/int4 见第 31 章</td>
+</tr>
+<tr>
+<td>--tp_size / --pp_size</td>
+<td>张量/流水线并行</td>
+<td>1 起步；多卡按互联选</td>
+</tr>
+<tr>
+<td>--max_input_len / --max_seq_len</td>
+<td>输入/总长上限</td>
+<td>与业务分布匹配，别盲目拉满</td>
+</tr>
+<tr>
+<td>--max_batch_size</td>
+<td>最大批大小</td>
+<td>影响显存与吞吐</td>
+</tr>
+<tr>
+<td>--gemm_plugin</td>
+<td>GEMM 插件</td>
+<td>auto 常用</td>
+</tr>
+<tr>
+<td>--use_fused_mlp</td>
+<td>MLP 融合</td>
+<td>开启通常更快</td>
+</tr>
+<tr>
+<td>--max_beam_width</td>
+<td>束搜索宽度</td>
+<td>生成任务用</td>
+</tr>
+<tr>
+<td>--kv_cache_free_gpu_memory_fraction</td>
+<td>KV 显存余量</td>
+<td>0.9 附近</td>
+</tr>
+</tbody>
+</table>
+<p><strong>构建原则</strong>：profile 的 opt 档要贴近业务真实长度（如 512），max 只是上限——只设 max 会牺牲性能。</p>
+<hr />
+<h2 id="07">07 高频踩坑排查</h2>
+<p><strong>坑 1：版本错配</strong>
+症状：convert/build/serve 各自版本不一致，报错或结果错。
+解法：全套用官方容器同版本；requirements/镜像 tag 锁进制品记录。</p>
+<p><strong>坑 2：GPU 架构不匹配</strong>
+症状：A100 上构建的 engine 拷到 H100 跑不了。
+解法：engine 按 GPU 架构构建与归档；换卡重 build。</p>
+<p><strong>坑 3：构建 OOM</strong>
+症状：trtllm-build 中途显存不足。
+解法：降 max_batch/max_seq、开 --workers、关其它占用进程。</p>
+<p><strong>坑 4：只设 max 档位</strong>
+症状：动态 shape 全按最大值走，慢。
+解法：设置 min/opt/max 三档，opt 贴近真实长度。</p>
+<p><strong>坑 5：跳过质量回归</strong>
+症状：engine 数值与原始模型有微小差异，某些题答案变了没人发现。
+解法：固定 20–50 题对比输出（关键词/格式/LLM 裁判），差异超阈值回查 plugin/精度。</p>
+<p><strong>坑 6：把 engine 当通用制品到处拷</strong>
+症状：换驱动/换卡后 engine 直接报废。
+解法：engine 与 GPU/TRT 版本绑定；制品库按“模型+卡型+版本”命名。</p>
+<p><strong>坑 7：模型频繁迭代还硬上 TRT</strong>
+症状：每周换模型，每周 build 一次，团队被构建拖垮。
+解法：先用 vLLM 迭代，模型稳定后再固化。</p>
+<hr />
+<h2 id="08-trt-llm">08 进阶优化：TRT-LLM 的进化方向</h2>
+<p><strong>① FP8/INT4 落 engine</strong>：在构建期直接做 FP8/INT4 量化（配合校准），显存与吞吐再上一个台阶（第 31 章量化联动）。</p>
+<p><strong>② In-flight Batching</strong>：请求级动态批处理，配合 Triton 的并发调度，吞吐接近 vLLM 的灵活性同时保留 engine 的低时延。</p>
+<p><strong>③ 多 engine 路由</strong>：短请求用小 engine（低 max len 更优），长请求用大 engine——按长度/场景路由。</p>
+<p><strong>④ PD 分离</strong>：prefill 与 decode 用不同 engine/实例，各自优化（第 39 章展开）。</p>
+<p><strong>⑤ 构建流水线化</strong>：模型发布触发自动 convert+build+bench+parity，产物进制品库——把“固化”变成 CI 的一步。</p>
+<hr />
+<h2 id="09-top3">09 本章核心总结（TOP3）</h2>
+<p><strong>TOP1</strong>：TRT-LLM 用构建期优化换推理期性能：权重→checkpoint→engine 三步，engine 与 GPU 架构/版本强绑定，必须版本化管理。</p>
+<p><strong>TOP2</strong>：流程 = 官方容器 → convert（dtype/tp）→ build（max len/batch/plugin，min-opt-max 三档）→ trtllm-bench → Triton 部署；构建 OOM 先降档位。</p>
+<p><strong>TOP3</strong>：值得固化的前提是“模型稳定+流量大+NVIDIA”；engine 上线前必做质量回归（固定题集对比输出），并记录版本/卡型/构建参数与性能报告。</p>
+<hr />
+<h2 id="10">10 连载衔接</h2>
+<p>上一章（第 29 章）掌握了 SGLang 的前缀优势；本章补上了 NVIDIA 极致固化的路线——部署工具箱已有三件主力：vLLM（通用）、SGLang（前缀）、TRT-LLM（固化）。</p>
+<p>下一章给模型“减肥”：【第 31 章】模型量化实操：FP16/BF16/INT8/INT4。显存不够、吞吐不够？先量化，再谈别的。</p>
+<hr />
+<h2 id="11">11 话题标签与系列目录索引</h2>
+<p>话题标签：<strong>#LLM全栈工程 #TensorRT #TRT-LLM #Engine #推理加速 #工程实战</strong>（Voice前沿 出品，欢迎收藏追更）</p>
+<p><strong>系列目录（46 章，随连载持续更新）</strong></p>
+<p>第 0 阶段·开篇引路
+- 01 一条大模型生产线全程发生了什么
+- 02 2 小时跑通最小闭环
+- 03 预训练到底在练什么</p>
+<p>第 1 阶段·预训练工程·数据核心层
+- 04 数据管道从零构建
+- 05 数据清洗规范与脏数据剔除
+- 06 文本过滤实战
+- 07 数据去重算法
+- 08 敏感数据脱敏
+- 09 数据质量打分体系
+- 10 领域专属数据构建
+- 11 增量预训练方案
+- 12 预训练超参选型与硬件适配
+- 13 断点续训、收敛判断与失败排查</p>
+<p>第 2 阶段·微调与对齐体系
+- 14 全维度微调技术拆解
+- 15 SFT 监督微调实战
+- 16 SFT 数据集构建与标注规范
+- 17 微调模板设计
+- 18 微调超参调优策略
+- 19 过拟合、欠拟合与灾难遗忘
+- 20 微调效果评估体系
+- 21 多轮对话微调专项
+- 22 模型蒸馏实战
+- 23 奖励模型训练
+- 24 RLHF/PPO 工程落地
+- 25 RLAIF：AI 反馈自动对齐
+- 26 小样本与领域自适应微调</p>
+<p>第 3 阶段·基础部署与推理优化
+- 27 部署框架横向对比
+- 28 vLLM 部署实战与参数调优
+- 29 SGLang 高性能推理落地
+- 30 TensorRT-LLM 固化与加速（本篇）
+- 31 模型量化实操
+- 32 模型剪枝与蒸馏压缩
+- 33 KV Cache 优化与上下文窗口拓展
+- 34 流式推理封装与高并发服务化</p>
+<p>第 4 阶段·高阶推理编译器极致优化
+- 35 推理编译器核心原理
+- 36 算子融合与计算图编译
+- 37 动态 shape 与显存编译器优化
+- 38 Speculative Decoding 投机推理进阶
+- 39 批量调度与并行深度适配
+- 40 内核重构与编译级量化</p>
+<p>第 5 阶段·全栈工程联调与项目落地
+- 41 全链路串联：数据到上线一体化流程
+- 42 领域大模型定制化落地
+- 43 高并发生产适配与端侧部署
+- 44 模型迭代升级与性能对标评测
+- 45 线上问题闭环排查
+- 46 工程化最佳实践汇总（手册终章）</p>
+<hr />
+<p><em>本文由 Voice前沿 出品 · 转载注明出处 · 下一篇：第 31 章 模型量化实操</em></p>
+</article>
+<nav class="prevnext"><a href="ch29.html">← 第 29 章 【LLM全栈工程·第29章】SGLang 高性能推理落地：前缀复用与结构化输出</a><a href="ch31.html" style="text-align:right">第 31 章 【LLM全栈工程·第31章】模型量化实操：FP16/BF16/INT8/INT4 怎么选怎么用 →</a></nav>
+</main>
+<footer class="wrap"><p>LLM 全栈工程 · Voice前沿 出品 · 46 章连载 · 收藏即手册</p></footer>
+</body>
+</html>

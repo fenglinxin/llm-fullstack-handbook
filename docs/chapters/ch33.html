@@ -1,0 +1,473 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>【LLM全栈工程·第33章】KV Cache 优化与上下文窗口拓展：长上下文的成本与解法 · LLM 全栈工程</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header"><div class="wrap">
+<a class="brand" href="../index.html">LLM 全栈工程<small>LLM 工业级全栈工程落地手册 · 46 章</small></a>
+<nav><a href="../index.html">目录</a><a href="https://github.com/">GitHub 仓库</a></nav>
+</div></header>
+<main class="wrap">
+<nav class="crumbs"><a href="../index.html">全部章节</a> / 【LLM全栈工程·第33章】KV Cache 优化与上下文窗口拓展：长上下文的成本与解法</nav>
+<details class="toc-box"><summary>本章目录</summary><div class="toc">
+<ul>
+<li><a href="#_1">单篇内容卡（排版本忽略）</a></li>
+<li><a href="#01">01 开篇导语</a></li>
+<li><a href="#02-kv-cache">02 白话原理：KV Cache 为什么这么贵</a><ul>
+<li><a href="#21-kv">2.1 KV 是什么</a></li>
+<li><a href="#22">2.2 显存公式（估算版）</a></li>
+</ul>
+</li>
+<li><a href="#03-kv">03 省 KV 的四条路线</a></li>
+<li><a href="#04">04 拓窗口：位置编码与外推</a><ul>
+<li><a href="#41">4.1 为什么超长会崩</a></li>
+<li><a href="#42">4.2 三种扩展路线</a></li>
+<li><a href="#43-needle-in-a-haystack">4.3 大海捞针评测（Needle in a Haystack）</a></li>
+</ul>
+</li>
+<li><a href="#05-kv-1">05 分步实操：算 KV、测长上下文、做优化（约 1 小时）</a><ul>
+<li><a href="#step-1-kv-5">Step 1 KV 显存估算（5 分钟）</a></li>
+<li><a href="#step-2-10">Step 2 大海捞针评测脚本（10 分钟）</a></li>
+<li><a href="#step-3-20">Step 3 按诊断结果做优化（20 分钟）</a></li>
+</ul>
+</li>
+<li><a href="#06-kv">06 参数详解：KV 与长上下文速查</a></li>
+<li><a href="#07">07 高频踩坑排查</a></li>
+<li><a href="#08-kv">08 进阶优化：KV 与长上下文进化方向</a></li>
+<li><a href="#09-top3">09 本章核心总结（TOP3）</a></li>
+<li><a href="#10">10 连载衔接</a></li>
+<li><a href="#11">11 话题标签与系列目录索引</a></li>
+</ul>
+</div>
+</details>
+<article class="article">
+<h1 id="llm33kv-cache">【LLM全栈工程·第33章】KV Cache 优化与上下文窗口拓展：长上下文的成本与解法</h1>
+<blockquote>
+<p>本篇为「LLM全栈工程」连载第 33 章（Voice前沿）。主标题以上为准；备选标题（供运营选用，不进正文）：① 长上下文为什么贵？KV Cache 显存公式与优化；② 从 8K 到 128K：位置编码、长度外推与“大海捞针”评测；③ KV 量化、前缀缓存与上下文管理：把长上下文用得起。</p>
+</blockquote>
+<hr />
+<h2 id="_1">单篇内容卡（排版本忽略）</h2>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>章节定位</td>
+<td>「基础部署与推理优化」第 7 篇：KV Cache 显存治理与上下文窗口拓展</td>
+</tr>
+<tr>
+<td>适用场景</td>
+<td>个人学习（长上下文实验）；小团队 RAG/长文档；企业长上下文服务</td>
+</tr>
+<tr>
+<td>核心知识点</td>
+<td>KV Cache 显存公式；GQA/分页/量化/前缀缓存；RoPE 外推与插值；大海捞针评测</td>
+</tr>
+<tr>
+<td>技术选型</td>
+<td>架构（GQA）→ 框架（PagedAttention/RadixAttention）→ KV 量化 → 位置编码扩展</td>
+</tr>
+<tr>
+<td>分步实操</td>
+<td>KV 显存估算 → 长上下文能力基线（大海捞针）→ KV 量化/前缀缓存 → 长度外推与长文本微调</td>
+</tr>
+<tr>
+<td>参数详解</td>
+<td>kv 量化位数、cache 占比、缩放系数、max len、needle 位置</td>
+</tr>
+<tr>
+<td>踩坑排查</td>
+<td>只加 max-model-len 不调模型、外推失效、KV 量化掉检索、忽略真实长度分布</td>
+</tr>
+<tr>
+<td>进阶优化</td>
+<td>H2O/StreamingLLM、KV 量化+前缀缓存组合、长文本评测体系</td>
+</tr>
+<tr>
+<td>本章 TOP3</td>
+<td>见文末</td>
+</tr>
+<tr>
+<td>下章预告</td>
+<td>第 34 章：流式推理封装与高并发服务化</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="01">01 开篇导语</h2>
+<p>“模型支持 128K 上下文”——支持归支持，<strong>用不用得起是另一回事</strong>。每多一个 token，模型都要多存一组 KV（Key/Value）向量；上下文从 8K 涨到 32K，KV 显存直接翻四倍。长上下文贵，贵在 KV Cache。</p>
+<p>同时，“支持 128K”还分两种：</p>
+<ol>
+<li>模型<strong>训练过</strong>长上下文（真会）；</li>
+<li>只是把 max-model-len 调大、靠位置编码硬撑（大概率越界就崩）。</li>
+</ol>
+<p>本章把长上下文拆成两条线同时解决：</p>
+<ul>
+<li><strong>省 KV</strong>：GQA、分页管理、前缀缓存、KV 量化；</li>
+<li><strong>拓窗口</strong>：RoPE 外推/插值 + 长文本微调 + “大海捞针”评测。</li>
+</ul>
+<blockquote>
+<p>一句话记住本章：<strong>上下文窗口 = 模型能力 × 显存预算 × 位置编码方案，三者缺一不可；先用“大海捞针”测真实能力，再谈优化。</strong></p>
+</blockquote>
+<hr />
+<h2 id="02-kv-cache">02 白话原理：KV Cache 为什么这么贵</h2>
+<h3 id="21-kv">2.1 KV 是什么</h3>
+<p>生成第 N+1 个 token 时，注意力要回头看前 N 个 token。为避免重复计算，框架把每个历史 token 的 Key/Value 缓存下来——这就是 KV Cache。它是“为了不重算而存的记忆”。</p>
+<h3 id="22">2.2 显存公式（估算版）</h3>
+<pre><code class="language-text">KV 字节 = 序列长度 × 层数 × KV头数 × 头维度 × 2(K和V) × 每元素字节
+</code></pre>
+<p>以 7B 级 GQA 模型为例（28 层、4 个 KV 头、头维 128、BF16）：</p>
+<ul>
+<li>每 token 每层：2 × 4 × 128 × 2B = 2KB；</li>
+<li>28 层共约 57KB/token；</li>
+<li>单请求 8K 上下文 ≈ 470MB；并发 32 路 ≈ 15GB——<strong>KV 常比权重更早撑爆显存</strong>。</li>
+</ul>
+<blockquote>
+<p>记忆锚点：<strong>KV 随“长度×并发”线性增长；GQA 少存、量化少存、缓存复用少算——三条路分别对治显存与算力。</strong></p>
+</blockquote>
+<h2 id="03-kv">03 省 KV 的四条路线</h2>
+<table>
+<thead>
+<tr>
+<th>路线</th>
+<th>做什么</th>
+<th>收益</th>
+<th>代价</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>架构级 GQA/MQA</td>
+<td>多个查询头共享 KV 头</td>
+<td>KV 减 4–8 倍</td>
+<td>需换/训模型</td>
+</tr>
+<tr>
+<td>框架级分页/前缀缓存</td>
+<td>PagedAttention/RadixAttention</td>
+<td>显存不碎、重复前缀不重算</td>
+<td>配置成本低</td>
+</tr>
+<tr>
+<td>KV 量化</td>
+<td>KV 存 INT8/FP8</td>
+<td>KV 显存减半</td>
+<td>长检索可能掉点</td>
+</tr>
+<tr>
+<td>应用级上下文管理</td>
+<td>截断/摘要/滑动窗口</td>
+<td>长度可控</td>
+<td>丢信息（配合记忆系统）</td>
+</tr>
+</tbody>
+</table>
+<p><strong>执行顺序建议</strong>：先用框架缓存与分页（零模型改动）→ 应用层控长度 → 再评估 KV 量化 → 最后才考虑换 GQA 架构。</p>
+<hr />
+<h2 id="04">04 拓窗口：位置编码与外推</h2>
+<h3 id="41">4.1 为什么超长会崩</h3>
+<p>模型位置编码（RoPE 类）在训练长度内有“熟悉的坐标”；超过训练长度后，位置坐标外推失真，注意力分布紊乱——表现为“前面还能读，后面开始胡言乱语或丢失早期信息”。</p>
+<h3 id="42">4.2 三种扩展路线</h3>
+<table>
+<thead>
+<tr>
+<th>路线</th>
+<th>做法</th>
+<th>效果</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>直接外推</td>
+<td>把 max len 调大</td>
+<td>通常不可靠</td>
+</tr>
+<tr>
+<td>RoPE 插值/缩放</td>
+<td>NTK-aware、YaRN 类缩放</td>
+<td>不需训练可延长 2–4 倍（有损）</td>
+</tr>
+<tr>
+<td>长文本继续训练</td>
+<td>用长序列数据 CPT/SFT</td>
+<td>真正学会长上下文（贵）</td>
+</tr>
+</tbody>
+</table>
+<p><strong>生产组合</strong>：YaRN 类缩放（快速应急）→ 长文本 CPT/SFT（正式能力）→ 评测验收。</p>
+<h3 id="43-needle-in-a-haystack">4.3 大海捞针评测（Needle in a Haystack）</h3>
+<p>把一句“事实”埋在长文档不同位置，然后提问它：能答对的位置区间=模型真实可用长度。这是长上下文能力的事实标准，比“loss 没涨”可信得多。</p>
+<h2 id="05-kv-1">05 分步实操：算 KV、测长上下文、做优化（约 1 小时）</h2>
+<h3 id="step-1-kv-5">Step 1 KV 显存估算（5 分钟）</h3>
+<p>保存 scripts/kv_memory.py：</p>
+<pre><code class="language-python"># scripts/kv_memory.py —— KV Cache 显存估算
+# 用法：python kv_memory.py [层数] [KV头数] [头维度] [序列长度] [并发] [每元素字节]
+import sys
+
+layers = int(sys.argv[1]) if len(sys.argv) &gt; 1 else 28
+kv_heads = int(sys.argv[2]) if len(sys.argv) &gt; 2 else 4
+head_dim = int(sys.argv[3]) if len(sys.argv) &gt; 3 else 128
+seq_len = int(sys.argv[4]) if len(sys.argv) &gt; 4 else 8192
+batch = int(sys.argv[5]) if len(sys.argv) &gt; 5 else 32
+dtype_bytes = float(sys.argv[6]) if len(sys.argv) &gt; 6 else 2.0
+
+per_token_per_layer = 2 * kv_heads * head_dim * dtype_bytes
+per_seq_gb = seq_len * layers * per_token_per_layer / (1024 ** 3)
+total_gb = per_seq_gb * batch
+
+print(&quot;每 token 每层: %.1f KB&quot; % (per_token_per_layer / 1024))
+print(&quot;单请求 %d tokens KV: %.2f GB&quot; % (seq_len, per_seq_gb))
+print(&quot;并发 %d 路 KV 合计: %.2f GB&quot; % (batch, total_gb))
+</code></pre>
+<p>试算：</p>
+<pre><code class="language-bash">python scripts/kv_memory.py 28 4 128 8192 32 2
+python scripts/kv_memory.py 28 4 128 32768 8 1   # KV INT8
+</code></pre>
+<blockquote>
+<p>把结果和第 12 章权重显存放在一起看，你就知道“为什么长上下文先爆的是 KV”。</p>
+</blockquote>
+<h3 id="step-2-10">Step 2 大海捞针评测脚本（10 分钟）</h3>
+<p>保存 scripts/needle_eval.py：</p>
+<pre><code class="language-python"># scripts/needle_eval.py —— 长上下文“大海捞针”评测
+# 用法：python needle_eval.py &lt;模型名&gt; &lt;base_url&gt; [填充段数]
+import json
+import pathlib
+import sys
+
+from openai import OpenAI
+
+model = sys.argv[1]
+base_url = sys.argv[2] if len(sys.argv) &gt; 2 else &quot;http://localhost:8000/v1&quot;
+segments = int(sys.argv[3]) if len(sys.argv) &gt; 3 else 60  # 每段约 50 字
+root = pathlib.Path(__file__).resolve().parent.parent
+client = OpenAI(base_url=base_url, api_key=&quot;EMPTY&quot;)
+
+NEEDLE = &quot;公司打印机型号是 HP LaserJet M405。&quot;
+FILLER = &quot;公司的 IT 服务台每周三下午进行系统维护，维护期间部分服务可能短暂不可用，请提前保存工作内容。&quot;
+QUESTION = &quot;根据上文内容，公司打印机型号是什么？只回答型号。&quot;
+
+def build_prompt(pos_frac):
+    total_segments = segments
+    needle_idx = max(0, min(total_segments - 1, int(total_segments * pos_frac)))
+    parts = []
+    for i in range(total_segments):
+        if i == needle_idx:
+            parts.append(NEEDLE)
+        else:
+            parts.append(FILLER)
+    return &quot;\n&quot;.join(parts)
+
+def ask(prompt):
+    resp = client.chat.completions.create(
+        model=model,
+        messages=[{&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: prompt + &quot;\n\n&quot; + QUESTION}],
+        temperature=0.0,
+        max_tokens=50,
+    )
+    return resp.choices[0].message.content
+
+positions = [0.1, 0.3, 0.5, 0.7, 0.9]
+results = []
+for pos in positions:
+    answer = ask(build_prompt(pos)) or &quot;&quot;
+    hit = &quot;HP LaserJet M405&quot; in answer
+    results.append({&quot;position&quot;: pos, &quot;hit&quot;: hit, &quot;answer&quot;: answer[:80]})
+    print((&quot;PASS&quot; if hit else &quot;FAIL&quot;), &quot;pos=%.1f&quot; % pos, answer[:50])
+
+report = {&quot;model&quot;: model, &quot;segments&quot;: segments,
+          &quot;hit_positions&quot;: [r[&quot;position&quot;] for r in results if r[&quot;hit&quot;]],
+          &quot;results&quot;: results}
+out = root / &quot;logs&quot; / (&quot;needle_&quot; + model + &quot;.json&quot;)
+with open(out, &quot;w&quot;, encoding=&quot;utf-8&quot;) as f:
+    json.dump(report, f, ensure_ascii=False, indent=2)
+print(&quot;hit:&quot;, len(report[&quot;hit_positions&quot;]), &quot;/&quot;, len(positions))
+</code></pre>
+<p>运行（在不同上下文规模下各跑一次）：</p>
+<pre><code class="language-bash">python scripts/needle_eval.py helpdesk http://localhost:8000/v1 40    # 约 2K 字
+python scripts/needle_eval.py helpdesk http://localhost:8000/v1 160   # 约 8K 字
+python scripts/needle_eval.py helpdesk http://localhost:8000/v1 640   # 约 32K 字
+</code></pre>
+<p><strong>判读</strong>：位置全覆盖命中=真实长上下文能力达标；只有前半段命中=后半段信息丢失（位置编码/训练长度问题）；全部失败=先别开长上下文，回到短上下文。</p>
+<h3 id="step-3-20">Step 3 按诊断结果做优化（20 分钟）</h3>
+<p><strong>① 显存不够 → 开框架级优化</strong>：</p>
+<pre><code class="language-bash"># vLLM：前缀缓存（共享 system/RAG 场景）
+vllm serve models/helpdesk-sft-merged --served-model-name helpdesk --enable-prefix-caching --max-model-len 32768
+# 支持时开启 KV 量化（字段以版本为准）：--kv-cache-dtype fp8
+</code></pre>
+<p><strong>② 能力不够（后半段捞不到针）→ 位置编码缩放</strong>：</p>
+<p>在模型 config.json 的 rope_scaling 中配置（示例，数值需按模型文档）：</p>
+<pre><code class="language-json">{
+  &quot;rope_scaling&quot;: {
+    &quot;type&quot;: &quot;yarn&quot;,
+    &quot;factor&quot;: 2.0,
+    &quot;original_max_position_embeddings&quot;: 8192
+  }
+}
+</code></pre>
+<blockquote>
+<p>注意：缩放只是“应急延长”，正式长上下文能力要靠<strong>长文本 CPT/SFT</strong>（第 11/15 章流程 + 长序列数据）；缩放后必须重跑大海捞针。</p>
+</blockquote>
+<p><strong>③ 应用层控长度</strong>：RAG/多轮场景把 system+检索结果控制在模型“真实可用长度”的 70% 以内，留余量给输出。</p>
+<p><strong>④ 复测与归档</strong>：</p>
+<pre><code class="language-bash">python scripts/needle_eval.py helpdesk http://localhost:8000/v1 160
+cd llm-demo
+git add scripts logs
+git commit -m &quot;kv: budget+needle eval; prefix cache/rope plan&quot;
+git tag kv-longctx-v1
+</code></pre>
+<blockquote>
+<p>长上下文是“能力+显存+成本”三角：先测真实能力，再按需扩展；永远别只把 max-model-len 调大就宣称支持长上下文。</p>
+</blockquote>
+<h2 id="06-kv">06 参数详解：KV 与长上下文速查</h2>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>参考</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>KV 量化位数</td>
+<td>FP8/INT8</td>
+<td>显存减半，长检索任务需回归</td>
+</tr>
+<tr>
+<td>前缀缓存</td>
+<td>命中率&gt;50% 再开</td>
+<td>共享 system/RAG 场景</td>
+</tr>
+<tr>
+<td>上下文使用率</td>
+<td>真实可用长度的 70%</td>
+<td>给输出留余量</td>
+</tr>
+<tr>
+<td>rope factor</td>
+<td>2–4 应急</td>
+<td>正式能力靠长文本训练</td>
+</tr>
+<tr>
+<td>长文本训练数据</td>
+<td>8K–128K 混合</td>
+<td>从短到长课程式</td>
+</tr>
+<tr>
+<td>needle 评测规模</td>
+<td>2K/8K/32K 三档</td>
+<td>按业务需求定</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="07">07 高频踩坑排查</h2>
+<p><strong>坑 1：只加 max-model-len</strong>
+症状：窗口调大后后半段胡言乱语。
+解法：用大海捞针测真实能力；能力不足走缩放+长文本训练。</p>
+<p><strong>坑 2：忽略 KV 显存公式</strong>
+症状：权重放得下，一开 32K 并发就 OOM。
+解法：先算 KV 账（本章脚本），再定长度/并发/量化。</p>
+<p><strong>坑 3：KV 量化不回归</strong>
+症状：量化后短问答没事，长文档检索掉点。
+解法：量化前后跑 needle + RAG 实测。</p>
+<p><strong>坑 4：RoPE 外推当训练</strong>
+症状：factor 调大后“看似能用”，复杂任务崩。
+解法：缩放只是应急；正式长上下文用长序列 CPT/SFT。</p>
+<p><strong>坑 5：只测开头不测结尾</strong>
+症状：短上下文评测全过，长上下文最后 30% 全是盲区。
+解法：needle 位置覆盖 0.1–0.9。</p>
+<p><strong>坑 6：上下文塞满 100%</strong>
+症状：输出被截断或开始丢早期记忆。
+解法：留 30% 输出余量；长会话用摘要/记忆管理（第 25 章）。</p>
+<p><strong>坑 7：拿“支持 128K”当卖点</strong>
+症状：宣传 128K，实际 32K 后准确率崩。
+解法：把 needle 命中区间写进模型卡与 SLA。</p>
+<hr />
+<h2 id="08-kv">08 进阶优化：KV 与长上下文进化方向</h2>
+<p><strong>① H2O / StreamingLLM</strong>：按注意力分数丢弃不重要 KV / 保留“注意力汇”窗口，超长流式对话的显存优化方案。</p>
+<p><strong>② KV 量化+前缀缓存组合</strong>：显存减半 + 重复前缀不重算，长 RAG 场景双倍收益。</p>
+<p><strong>③ 长文本评测体系</strong>：needle + 长文档问答 + 多跳检索三类题，形成长上下文标准评测（进第 44 章迭代门禁）。</p>
+<p><strong>④ PD 分离下的 KV</strong>：prefill 与 decode 分离后，KV 可在两者间高效传递（第 39 章）。</p>
+<p><strong>⑤ 上下文工程</strong>：不是所有内容都值得进上下文——检索排序、去重、压缩（第 25 章记忆/第 41 章 RAG 衔接）才是长上下文的真正性价比来源。</p>
+<hr />
+<h2 id="09-top3">09 本章核心总结（TOP3）</h2>
+<p><strong>TOP1</strong>：KV Cache 显存 = 长度×层数×KV头×头维×2×字节；GQA/分页/前缀缓存/KV 量化四条路分别对治显存与重复计算。</p>
+<p><strong>TOP2</strong>：上下文窗口是“能力×显存×成本”三角：用大海捞针测真实可用长度（位置覆盖 0.1–0.9），别把 max-model-len 当能力。</p>
+<p><strong>TOP3</strong>：RoPE 缩放只应急，正式长上下文靠长文本 CPT/SFT；上线前做 KV 量化与长上下文质量回归，把 needle 命中区间写进模型卡。</p>
+<hr />
+<h2 id="10">10 连载衔接</h2>
+<p>上一章（第 32 章）完成了模型压缩；本章把推理内存的大头 KV Cache 管了起来——显存账会算了、长上下文会测了、优化路线齐了。</p>
+<p>下一章把单机服务变成生产服务：【第 34 章】流式推理封装与高并发服务化部署。批处理、限流、负载均衡与稳定性监控，是上线的最后一公里。</p>
+<hr />
+<h2 id="11">11 话题标签与系列目录索引</h2>
+<p>话题标签：<strong>#LLM全栈工程 #KVCache #长上下文 #RoPE #大海捞针 #推理优化 #工程实战</strong>（Voice前沿 出品，欢迎收藏追更）</p>
+<p><strong>系列目录（46 章，随连载持续更新）</strong></p>
+<p>第 0 阶段·开篇引路
+- 01 一条大模型生产线全程发生了什么
+- 02 2 小时跑通最小闭环
+- 03 预训练到底在练什么</p>
+<p>第 1 阶段·预训练工程·数据核心层
+- 04 数据管道从零构建
+- 05 数据清洗规范与脏数据剔除
+- 06 文本过滤实战
+- 07 数据去重算法
+- 08 敏感数据脱敏
+- 09 数据质量打分体系
+- 10 领域专属数据构建
+- 11 增量预训练方案
+- 12 预训练超参选型与硬件适配
+- 13 断点续训、收敛判断与失败排查</p>
+<p>第 2 阶段·微调与对齐体系
+- 14 全维度微调技术拆解
+- 15 SFT 监督微调实战
+- 16 SFT 数据集构建与标注规范
+- 17 微调模板设计
+- 18 微调超参调优策略
+- 19 过拟合、欠拟合与灾难遗忘
+- 20 微调效果评估体系
+- 21 多轮对话微调专项
+- 22 模型蒸馏实战
+- 23 奖励模型训练
+- 24 RLHF/PPO 工程落地
+- 25 RLAIF：AI 反馈自动对齐
+- 26 小样本与领域自适应微调</p>
+<p>第 3 阶段·基础部署与推理优化
+- 27 部署框架横向对比
+- 28 vLLM 部署实战与参数调优
+- 29 SGLang 高性能推理落地
+- 30 TensorRT-LLM 固化与加速
+- 31 模型量化实操
+- 32 模型剪枝与蒸馏压缩
+- 33 KV Cache 优化与上下文窗口拓展（本篇）
+- 34 流式推理封装与高并发服务化</p>
+<p>第 4 阶段·高阶推理编译器极致优化
+- 35 推理编译器核心原理
+- 36 算子融合与计算图编译
+- 37 动态 shape 与显存编译器优化
+- 38 Speculative Decoding 投机推理进阶
+- 39 批量调度与并行深度适配
+- 40 内核重构与编译级量化</p>
+<p>第 5 阶段·全栈工程联调与项目落地
+- 41 全链路串联：数据到上线一体化流程
+- 42 领域大模型定制化落地
+- 43 高并发生产适配与端侧部署
+- 44 模型迭代升级与性能对标评测
+- 45 线上问题闭环排查
+- 46 工程化最佳实践汇总（手册终章）</p>
+<hr />
+<p><em>本文由 Voice前沿 出品 · 转载注明出处 · 下一篇：第 34 章 流式推理封装与高并发服务化</em></p>
+</article>
+<nav class="prevnext"><a href="ch32.html">← 第 32 章 【LLM全栈工程·第32章】模型剪枝与蒸馏压缩：小模型化落地</a><a href="ch34.html" style="text-align:right">第 34 章 【LLM全栈工程·第34章】流式推理封装与高并发服务化：从单实例到生产网关 →</a></nav>
+</main>
+<footer class="wrap"><p>LLM 全栈工程 · Voice前沿 出品 · 46 章连载 · 收藏即手册</p></footer>
+</body>
+</html>

@@ -1,0 +1,522 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>【LLM全栈工程·第32章】模型剪枝与蒸馏压缩：小模型化落地 · LLM 全栈工程</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header"><div class="wrap">
+<a class="brand" href="../index.html">LLM 全栈工程<small>LLM 工业级全栈工程落地手册 · 46 章</small></a>
+<nav><a href="../index.html">目录</a><a href="https://github.com/">GitHub 仓库</a></nav>
+</div></header>
+<main class="wrap">
+<nav class="crumbs"><a href="../index.html">全部章节</a> / 【LLM全栈工程·第32章】模型剪枝与蒸馏压缩：小模型化落地</nav>
+<details class="toc-box"><summary>本章目录</summary><div class="toc">
+<ul>
+<li><a href="#_1">单篇内容卡（排版本忽略）</a></li>
+<li><a href="#01">01 开篇导语</a></li>
+<li><a href="#02">02 白话原理：三种剪枝粒度</a></li>
+<li><a href="#03">03 压缩决策框架：先选路线再动手</a></li>
+<li><a href="#04">04 剪枝方法选型</a></li>
+<li><a href="#05-40">05 分步实操：压缩路线规划与稀疏度探测（约 40 分钟）</a><ul>
+<li><a href="#step-1-5">Step 1 压缩路线助手（5 分钟）</a></li>
+<li><a href="#step-2-10">Step 2 稀疏度探测脚本（10 分钟）</a></li>
+<li><a href="#step-3-3060">Step 3 剪枝+恢复训练路线（如决定尝试，30–60 分钟）</a></li>
+<li><a href="#step-4-10">Step 4 多路线对比（10 分钟）</a></li>
+<li><a href="#step-5">Step 5 归档</a></li>
+</ul>
+</li>
+<li><a href="#06">06 参数详解：剪枝速查</a></li>
+<li><a href="#07">07 高频踩坑排查</a></li>
+<li><a href="#08">08 进阶优化：剪枝的进化方向</a></li>
+<li><a href="#09-top3">09 本章核心总结（TOP3）</a></li>
+<li><a href="#10">10 连载衔接</a></li>
+<li><a href="#11">11 话题标签与系列目录索引</a></li>
+</ul>
+</div>
+</details>
+<article class="article">
+<h1 id="llm32">【LLM全栈工程·第32章】模型剪枝与蒸馏压缩：小模型化落地</h1>
+<blockquote>
+<p>本篇为「LLM全栈工程」连载第 32 章（Voice前沿）。主标题以上为准；备选标题（供运营选用，不进正文）：① 量化之外的第二条压缩路：剪枝原理与落地；② 剪枝、蒸馏、量化怎么组合？模型压缩决策框架；③ 稀疏不一定更快：剪枝的 kernel 现实与恢复训练。</p>
+</blockquote>
+<hr />
+<h2 id="_1">单篇内容卡（排版本忽略）</h2>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>章节定位</td>
+<td>「基础部署与推理优化」第 6 篇：剪枝与压缩组合策略，衔接蒸馏（第 22 章）与量化（第 31 章）</td>
+</tr>
+<tr>
+<td>适用场景</td>
+<td>个人学习（压缩实验）；小团队端侧/降本；企业模型小型化</td>
+</tr>
+<tr>
+<td>核心知识点</td>
+<td>剪枝类型；重要性度量；恢复训练；压缩组合路线；kernel 现实</td>
+</tr>
+<tr>
+<td>技术选型</td>
+<td>结构化/半结构化/非结构化剪枝；SparseGPT/Wanda 类方法；剪枝 vs 蒸馏</td>
+</tr>
+<tr>
+<td>分步实操</td>
+<td>压缩目标设定 → 稀疏度探测 → 剪枝+恢复训练（工具路线）→ 多路线对比 → 归档</td>
+</tr>
+<tr>
+<td>参数详解</td>
+<td>稀疏率、剪枝粒度、重要性度量、恢复训练超参</td>
+</tr>
+<tr>
+<td>踩坑排查</td>
+<td>朴素幅度剪枝伤模型、剪了不快、不恢复训练、粒度选错、只比参数量</td>
+</tr>
+<tr>
+<td>进阶优化</td>
+<td>2:4 半结构化、Wanda/SparseGPT、分层剪枝、联合压缩</td>
+</tr>
+<tr>
+<td>本章 TOP3</td>
+<td>见文末</td>
+</tr>
+<tr>
+<td>下章预告</td>
+<td>第 33 章：KV Cache 优化与上下文窗口拓展</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="01">01 开篇导语</h2>
+<p>模型压缩有三板斧：<strong>量化</strong>（改数值精度，已讲）、<strong>蒸馏</strong>（换小架构，第 22 章）、<strong>剪枝</strong>（删冗余参数/结构，本章）。三者可以单独用，也可以组合——但组合顺序和取舍完全不同。</p>
+<p>剪枝的思路很直接：大模型里大量权重接近零、很多注意力头/神经元是冗余的，删掉它们应该不影响效果？</p>
+<p>现实要打两个折扣：</p>
+<ol>
+<li>LLM 的权重分布有 outlier，<strong>朴素“删小权重”会严重伤模型</strong>——需要 SparseGPT/Wanda 这类考虑激活/误差补偿的方法；</li>
+<li><strong>稀疏不一定更快</strong>：非结构化稀疏需要专用 kernel 才有加速，通用框架里可能反而更慢。</li>
+</ol>
+<p>所以本章的重点不是“怎么删”，而是“该不该剪、剪哪种、怎么恢复、和量化/蒸馏怎么排”。</p>
+<blockquote>
+<p>一句话记住本章：<strong>剪枝的收益 = 稀疏率 × 硬件支持 × 恢复训练质量；对 LLM 而言，“结构化/半结构化 + 恢复训练”才是工程现实。</strong></p>
+</blockquote>
+<hr />
+<h2 id="02">02 白话原理：三种剪枝粒度</h2>
+<table>
+<thead>
+<tr>
+<th>类型</th>
+<th>删什么</th>
+<th>加速条件</th>
+<th>效果风险</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>非结构化</td>
+<td>任意单个权重</td>
+<td>需要稀疏 kernel</td>
+<td>精度损失大、难加速</td>
+</tr>
+<tr>
+<td>半结构化 2:4</td>
+<td>每 4 个删 2 个（固定模式）</td>
+<td>NVIDIA 稀疏内核</td>
+<td>精度较可控</td>
+</tr>
+<tr>
+<td>结构化</td>
+<td>整行/整列/头/层</td>
+<td>常规 kernel 即可</td>
+<td>容量损失大</td>
+</tr>
+</tbody>
+</table>
+<ul>
+<li><strong>重要性度量</strong>：不是“谁小删谁”，而是“删了谁对输出影响小”——常见度量：权重幅度、激活幅度（Wanda）、二阶误差补偿（SparseGPT）；</li>
+<li><strong>恢复训练</strong>：剪完必须用少量数据微调（recovery fine-tuning），把损伤补回来；</li>
+<li><strong>层/头剪枝</strong>：删掉冗余注意力头或整层（结构最简单，但要先做“冗余度分析”）。</li>
+</ul>
+<blockquote>
+<p>记忆锚点：<strong>非结构化剪枝是“把布料剪成镂空”，半结构化是“按花纹剪”，结构化是“直接裁掉一块”——裁法越规整，硬件越好加速，但下手越重。</strong></p>
+</blockquote>
+<h2 id="03">03 压缩决策框架：先选路线再动手</h2>
+<table>
+<thead>
+<tr>
+<th>目标</th>
+<th>首选路线</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>省显存（权重变小）</td>
+<td>量化 INT4/FP8</td>
+<td>最成熟，先做</td>
+</tr>
+<tr>
+<td>换小模型（端侧）</td>
+<td>蒸馏</td>
+<td>7B→3B，效果可控</td>
+</tr>
+<tr>
+<td>同架构提速</td>
+<td>量化+kernel 优化</td>
+<td>剪枝提速依赖稀疏内核</td>
+</tr>
+<tr>
+<td>极限压缩</td>
+<td>蒸馏+量化，再评估剪枝</td>
+<td>剪枝放最后、收益不确定</td>
+</tr>
+<tr>
+<td>结构瘦身</td>
+<td>头/层剪枝</td>
+<td>需要冗余分析与恢复训练</td>
+</tr>
+</tbody>
+</table>
+<p><strong>组合顺序建议</strong>：先蒸馏（架构变小）→ 再量化（数值变小）→ 最后考虑剪枝；剪枝放在量化前做会更伤，通常“剪+恢复”后再量化。</p>
+<blockquote>
+<p>生产现实：LLM 场景中，<strong>量化与蒸馏的 ROI 远高于通用剪枝</strong>；剪枝多用于科研/特定硬件（稀疏加速器）或作为压缩组合的最后一步。</p>
+</blockquote>
+<hr />
+<h2 id="04">04 剪枝方法选型</h2>
+<table>
+<thead>
+<tr>
+<th>方法</th>
+<th>类型</th>
+<th>思路</th>
+<th>落地难度</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>幅度剪枝</td>
+<td>非结构化</td>
+<td>删绝对值小的权重</td>
+<td>低（但 LLM 效果差）</td>
+</tr>
+<tr>
+<td>Wanda</td>
+<td>非结构化</td>
+<td>权重×激活幅度</td>
+<td>中</td>
+</tr>
+<tr>
+<td>SparseGPT</td>
+<td>非结构化</td>
+<td>逐层最小化重建误差</td>
+<td>中高</td>
+</tr>
+<tr>
+<td>2:4 半结构化</td>
+<td>固定模式</td>
+<td>配合稀疏 kernel</td>
+<td>中（需硬件支持）</td>
+</tr>
+<tr>
+<td>头/层剪枝</td>
+<td>结构化</td>
+<td>冗余分析后删组件</td>
+<td>中（需恢复训练）</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>无论哪种：剪完必须做<strong>恢复训练</strong>（recovery fine-tuning），并跑与第 31 章相同的质量回归三板斧。</p>
+</blockquote>
+<h2 id="05-40">05 分步实操：压缩路线规划与稀疏度探测（约 40 分钟）</h2>
+<h3 id="step-1-5">Step 1 压缩路线助手（5 分钟）</h3>
+<p>保存 scripts/compress_plan.py：</p>
+<pre><code class="language-python"># scripts/compress_plan.py —— 压缩路线建议
+# 用法：python compress_plan.py &lt;memory|speed|edge|extreme&gt; &lt;distilled:y/n&gt; &lt;quantized:y/n&gt;
+import sys
+
+target = sys.argv[1] if len(sys.argv) &gt; 1 else &quot;memory&quot;
+distilled = (sys.argv[2] if len(sys.argv) &gt; 2 else &quot;n&quot;).lower() == &quot;y&quot;
+quantized = (sys.argv[3] if len(sys.argv) &gt; 3 else &quot;n&quot;).lower() == &quot;y&quot;
+
+if target == &quot;memory&quot; and not quantized:
+    print(&quot;路线：量化 INT4/FP8（先做）&quot;)
+elif target == &quot;edge&quot; and not distilled:
+    print(&quot;路线：蒸馏 7B-&gt;3B -&gt; 量化；剪枝评估放最后&quot;)
+elif target == &quot;speed&quot;:
+    print(&quot;路线：量化 + kernel 优化（剪枝需确认硬件稀疏内核）&quot;)
+elif target == &quot;extreme&quot;:
+    print(&quot;路线：蒸馏 -&gt; 量化 -&gt;（可选）2:4 剪枝；每步做质量回归&quot;)
+else:
+    print(&quot;当前状态已满足目标，或先完成蒸馏/量化再评估剪枝&quot;)
+</code></pre>
+<p>试几个场景：</p>
+<pre><code class="language-bash">python scripts/compress_plan.py memory n n
+python scripts/compress_plan.py edge n n
+python scripts/compress_plan.py extreme y y
+</code></pre>
+<h3 id="step-2-10">Step 2 稀疏度探测脚本（10 分钟）</h3>
+<p>保存 scripts/sparsity_probe.py：</p>
+<pre><code class="language-python"># scripts/sparsity_probe.py —— 权重幅度分布与理论稀疏率探测
+# 用法：python sparsity_probe.py &lt;模型目录&gt;
+import json
+import pathlib
+import sys
+
+import torch
+from transformers import AutoModelForCausalLM
+
+model_path = sys.argv[1] if len(sys.argv) &gt; 1 else &quot;models/helpdesk-sft-merged&quot;
+root = pathlib.Path(__file__).resolve().parent.parent
+
+model = AutoModelForCausalLM.from_pretrained(model_path, torch_dtype=torch.bfloat16)
+all_weights = []
+layer_stats = []
+for name, module in model.named_modules():
+    if isinstance(module, torch.nn.Linear):
+        w = module.weight.data.detach().float().abs()
+        all_weights.append(w.flatten())
+        layer_stats.append({&quot;name&quot;: name, &quot;params&quot;: w.numel(), &quot;mean_abs&quot;: round(w.mean().item(), 6)})
+
+all_weights = torch.cat(all_weights)
+total = all_weights.numel()
+report = {&quot;model&quot;: model_path, &quot;total_params&quot;: total, &quot;thresholds&quot;: {}}
+for q in (0.05, 0.1, 0.3, 0.5):
+    t = torch.quantile(all_weights, q).item()
+    frac = (all_weights &lt;= t).float().mean().item()
+    report[&quot;thresholds&quot;][str(q)] = {&quot;abs_threshold&quot;: round(t, 6), &quot;frac_below&quot;: round(frac, 4)}
+
+report[&quot;note&quot;] = &quot;幅度低不代表可安全删除：LLM 剪枝需激活感知/误差补偿+恢复训练&quot;
+out = root / &quot;logs&quot; / &quot;sparsity_report.json&quot;
+with open(out, &quot;w&quot;, encoding=&quot;utf-8&quot;) as f:
+    json.dump(report, f, ensure_ascii=False, indent=2)
+print(json.dumps(report, ensure_ascii=False, indent=2))
+</code></pre>
+<p>运行：</p>
+<pre><code class="language-bash">python scripts/sparsity_probe.py models/helpdesk-sft-merged
+cat logs/sparsity_report.json
+</code></pre>
+<p><strong>怎么看</strong>：frac_below 反映“按幅度阈值可删比例”的上限参考，但<strong>不是可安全删除比例</strong>——真正决策要靠 Wanda/SparseGPT 类方法在验证集上的表现。</p>
+<h3 id="step-3-3060">Step 3 剪枝+恢复训练路线（如决定尝试，30–60 分钟）</h3>
+<ol>
+<li>用开源实现（如 SparseGPT/Wanda 的官方仓库，以仓库文档为准）对模型做 10%–30% 稀疏化，导出稀疏权重；</li>
+<li><strong>恢复训练必做</strong>：用第 26 章 cold_train 数据做 1–2 epoch LoRA/全参恢复微调（LR 取正常 SFT 的 1/3–1/2）；</li>
+<li>导出合并后跑质量回归（eval_suite + 敏感任务 + 生成噪声检查）。</li>
+</ol>
+<blockquote>
+<p>如果仓库/框架不支持你的模型架构，或恢复后掉点超红线，直接放弃剪枝路线——回到蒸馏+量化，不要硬撑。</p>
+</blockquote>
+<h3 id="step-4-10">Step 4 多路线对比（10 分钟）</h3>
+<table>
+<thead>
+<tr>
+<th>路线</th>
+<th>参数量</th>
+<th>显存</th>
+<th>吞吐</th>
+<th>质量分</th>
+<th>工程成本</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>BF16 基线</td>
+<td>7B</td>
+<td>?</td>
+<td>?</td>
+<td>?</td>
+<td>-</td>
+</tr>
+<tr>
+<td>INT4 量化（第 31 章）</td>
+<td>7B</td>
+<td>?</td>
+<td>?</td>
+<td>?</td>
+<td>低</td>
+</tr>
+<tr>
+<td>3B 蒸馏（第 22 章）</td>
+<td>3B</td>
+<td>?</td>
+<td>?</td>
+<td>?</td>
+<td>中</td>
+</tr>
+<tr>
+<td>剪枝 30%（本章）</td>
+<td>?</td>
+<td>?</td>
+<td>?</td>
+<td>?</td>
+<td>高</td>
+</tr>
+</tbody>
+</table>
+<p><strong>决策规则</strong>：质量与成本同权时，多数场景排序是“量化 &gt; 蒸馏 &gt; 剪枝”；剪枝只在有稀疏硬件/结构瘦身需求时胜出。</p>
+<h3 id="step-5">Step 5 归档</h3>
+<pre><code class="language-bash">cd llm-demo
+git add scripts logs
+git commit -m &quot;compress: plan + sparsity probe + route compare&quot;
+git tag compress-v1
+</code></pre>
+<blockquote>
+<p>把“压缩决策表”沉淀成团队模板：每个模型上线前先回答“要不要压、压哪条路、收益够不够覆盖工程成本”。</p>
+</blockquote>
+<h2 id="06">06 参数详解：剪枝速查</h2>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>参考</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>稀疏率</td>
+<td>10%–30% 起步</td>
+<td>LLM 超过 50% 通常崩</td>
+</tr>
+<tr>
+<td>粒度</td>
+<td>2:4 半结构化优先</td>
+<td>有 kernel 收益</td>
+</tr>
+<tr>
+<td>重要性度量</td>
+<td>激活感知/误差补偿</td>
+<td>别用纯幅度</td>
+</tr>
+<tr>
+<td>恢复训练数据</td>
+<td>500–5000 条领域指令</td>
+<td>与任务分布一致</td>
+</tr>
+<tr>
+<td>恢复 LR</td>
+<td>正常 SFT 的 1/3–1/2</td>
+<td>小步修复</td>
+</tr>
+<tr>
+<td>恢复 epoch</td>
+<td>1–2</td>
+<td>多了过拟合</td>
+</tr>
+<tr>
+<td>剪枝位置</td>
+<td>先剪 MLP 后剪注意力</td>
+<td>经验顺序，需验证</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="07">07 高频踩坑排查</h2>
+<p><strong>坑 1：幅度剪枝直接用</strong>
+症状：按绝对值删 30% 权重，模型变胡话。
+解法：用 Wanda/SparseGPT 类激活感知或误差补偿方法；幅度只做参考。</p>
+<p><strong>坑 2：剪完不恢复训练</strong>
+症状：稀疏权重直接上线，质量崩。
+解法：恢复微调是剪枝的组成部分，不是可选项。</p>
+<p><strong>坑 3：剪了但没变快</strong>
+症状：参数量少了，时延没降（kernel 不支持稀疏）。
+解法：先确认硬件/框架支持（2:4 稀疏、专用内核）；不支持就只当“省显存实验”。</p>
+<p><strong>坑 4：拿参数量当效果</strong>
+症状：参数量减半就宣布成功，任务分没测。
+解法：质量回归三板斧照跑（同第 31 章）。</p>
+<p><strong>坑 5：粒度选错</strong>
+症状：要部署加速却做非结构化剪枝。
+解法：目标加速→半结构化/结构化+支持的 kernel；目标省显存→量化更省事。</p>
+<p><strong>坑 6：先剪后量化顺序错</strong>
+症状：剪完再量化误差叠加，双重损伤。
+解法：恢复训练后再量化；或直接蒸馏+量化组合跳过剪枝。</p>
+<p><strong>坑 7：忽略蒸馏这条更优路</strong>
+症状：剪枝折腾两周，收益不如直接换 3B 蒸馏。
+解法：先跑第 22 章蒸馏对比，剪枝只在必要时做。</p>
+<hr />
+<h2 id="08">08 进阶优化：剪枝的进化方向</h2>
+<p><strong>① 2:4 半结构化</strong>：NVIDIA 稀疏内核支持固定 2:4 模式，配合恢复训练，是“真能提速”的主流剪枝形态。</p>
+<p><strong>② 结构化层/头剪枝</strong>：对冗余层/注意力头做“删除+恢复”，直接减少计算图规模，通用 kernel 即可收益。</p>
+<p><strong>③ Wanda/SparseGPT 工程化</strong>：官方仓库流程（校准集→剪枝→导出），与本章探测脚本衔接成 pipeline。</p>
+<p><strong>④ 联合压缩</strong>：蒸馏→剪枝（结构）→量化（数值）按序叠加，每步回归；只在极限压缩需求时采用。</p>
+<p><strong>⑤ 稀疏感知训练</strong>：训练时就加入稀疏正则/掩码（类似 QAT），让模型天生适应剪枝——成本高、收益稳。</p>
+<hr />
+<h2 id="09-top3">09 本章核心总结（TOP3）</h2>
+<p><strong>TOP1</strong>：压缩路线按 ROI 排序：量化 &gt; 蒸馏 &gt; 剪枝；剪枝分非结构化/2:4 半结构化/结构化，只有硬件支持稀疏内核才谈得上提速。</p>
+<p><strong>TOP2</strong>：LLM 剪枝必须“激活感知/误差补偿 + 恢复训练”：幅度剪枝不可直接用于 LLM；剪完跑质量回归三板斧。</p>
+<p><strong>TOP3</strong>：决策看“质量+显存+吞吐+工程成本”四列对比表，别拿参数量当效果；多数生产场景先走蒸馏+量化组合。</p>
+<hr />
+<h2 id="10">10 连载衔接</h2>
+<p>上一章（第 31 章）完成量化；本章补上剪枝与压缩组合——至此“模型变小”的三种手段（蒸馏/量化/剪枝）全部讲完，可按需组合。</p>
+<p>下一章回到推理内存的核心：【第 33 章】KV Cache 优化与上下文窗口拓展。长上下文为什么贵？KV Cache 怎么省？一次讲透。</p>
+<hr />
+<h2 id="11">11 话题标签与系列目录索引</h2>
+<p>话题标签：<strong>#LLM全栈工程 #模型剪枝 #模型压缩 #稀疏化 #蒸馏 #工程实战</strong>（Voice前沿 出品，欢迎收藏追更）</p>
+<p><strong>系列目录（46 章，随连载持续更新）</strong></p>
+<p>第 0 阶段·开篇引路
+- 01 一条大模型生产线全程发生了什么
+- 02 2 小时跑通最小闭环
+- 03 预训练到底在练什么</p>
+<p>第 1 阶段·预训练工程·数据核心层
+- 04 数据管道从零构建
+- 05 数据清洗规范与脏数据剔除
+- 06 文本过滤实战
+- 07 数据去重算法
+- 08 敏感数据脱敏
+- 09 数据质量打分体系
+- 10 领域专属数据构建
+- 11 增量预训练方案
+- 12 预训练超参选型与硬件适配
+- 13 断点续训、收敛判断与失败排查</p>
+<p>第 2 阶段·微调与对齐体系
+- 14 全维度微调技术拆解
+- 15 SFT 监督微调实战
+- 16 SFT 数据集构建与标注规范
+- 17 微调模板设计
+- 18 微调超参调优策略
+- 19 过拟合、欠拟合与灾难遗忘
+- 20 微调效果评估体系
+- 21 多轮对话微调专项
+- 22 模型蒸馏实战
+- 23 奖励模型训练
+- 24 RLHF/PPO 工程落地
+- 25 RLAIF：AI 反馈自动对齐
+- 26 小样本与领域自适应微调</p>
+<p>第 3 阶段·基础部署与推理优化
+- 27 部署框架横向对比
+- 28 vLLM 部署实战与参数调优
+- 29 SGLang 高性能推理落地
+- 30 TensorRT-LLM 固化与加速
+- 31 模型量化实操
+- 32 模型剪枝与蒸馏压缩（本篇）
+- 33 KV Cache 优化与上下文窗口拓展
+- 34 流式推理封装与高并发服务化</p>
+<p>第 4 阶段·高阶推理编译器极致优化
+- 35 推理编译器核心原理
+- 36 算子融合与计算图编译
+- 37 动态 shape 与显存编译器优化
+- 38 Speculative Decoding 投机推理进阶
+- 39 批量调度与并行深度适配
+- 40 内核重构与编译级量化</p>
+<p>第 5 阶段·全栈工程联调与项目落地
+- 41 全链路串联：数据到上线一体化流程
+- 42 领域大模型定制化落地
+- 43 高并发生产适配与端侧部署
+- 44 模型迭代升级与性能对标评测
+- 45 线上问题闭环排查
+- 46 工程化最佳实践汇总（手册终章）</p>
+<hr />
+<p><em>本文由 Voice前沿 出品 · 转载注明出处 · 下一篇：第 33 章 KV Cache 优化与上下文窗口拓展</em></p>
+</article>
+<nav class="prevnext"><a href="ch31.html">← 第 31 章 【LLM全栈工程·第31章】模型量化实操：FP16/BF16/INT8/INT4 怎么选怎么用</a><a href="ch33.html" style="text-align:right">第 33 章 【LLM全栈工程·第33章】KV Cache 优化与上下文窗口拓展：长上下文的成本与解法 →</a></nav>
+</main>
+<footer class="wrap"><p>LLM 全栈工程 · Voice前沿 出品 · 46 章连载 · 收藏即手册</p></footer>
+</body>
+</html>

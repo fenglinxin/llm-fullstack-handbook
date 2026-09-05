@@ -1,0 +1,738 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>【LLM全栈工程·第02章】2 小时跑通最小闭环：从开源模型下载到 LoRA 微调再到推理服务 · LLM 全栈工程</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header"><div class="wrap">
+<a class="brand" href="../index.html">LLM 全栈工程<small>LLM 工业级全栈工程落地手册 · 46 章</small></a>
+<nav><a href="../index.html">目录</a><a href="https://github.com/">GitHub 仓库</a></nav>
+</div></header>
+<main class="wrap">
+<nav class="crumbs"><a href="../index.html">全部章节</a> / 【LLM全栈工程·第02章】2 小时跑通最小闭环：从开源模型下载到 LoRA 微调再到推理服务</nav>
+<details class="toc-box"><summary>本章目录</summary><div class="toc">
+<ul>
+<li><a href="#_1">单篇内容卡（排版本忽略）</a></li>
+<li><a href="#01">01 开篇导语</a></li>
+<li><a href="#02">02 最小闭环长什么样</a></li>
+<li><a href="#03">03 技术选型：三组关键选择</a><ul>
+<li><a href="#31">3.1 底座模型怎么选</a></li>
+<li><a href="#32">3.2 微调框架怎么选</a></li>
+<li><a href="#33">3.3 推理框架怎么选</a></li>
+</ul>
+</li>
+<li><a href="#04-2-8-step">04 分步实操：2 小时跑通（约 8 个 Step）</a><ul>
+<li><a href="#step-0-5">Step 0 建工程目录（5 分钟）</a></li>
+<li><a href="#step-1-15">Step 1 装环境（15 分钟）</a></li>
+<li><a href="#step-2-1030">Step 2 下载底座模型（10–30 分钟，看网速）</a></li>
+<li><a href="#step-3-10">Step 3 合成演示数据集（10 分钟）</a></li>
+<li><a href="#step-4-lora-2040">Step 4 LoRA 微调（20–40 分钟）</a></li>
+<li><a href="#step-5-5">Step 5 合并导出（5 分钟）</a></li>
+<li><a href="#step-6-vllm-5">Step 6 起 vLLM 服务（5 分钟）</a></li>
+<li><a href="#step-7-10">Step 7 验收：微调前后对比（10 分钟）</a></li>
+<li><a href="#_2">时间预算小结</a></li>
+</ul>
+</li>
+<li><a href="#05">05 参数详解：本章用到的核心配置</a></li>
+<li><a href="#06-3">06 高频踩坑排查（本章至少会遇到 3 个）</a></li>
+<li><a href="#07">07 进阶优化：跑通之后还能做什么</a></li>
+<li><a href="#08-top3">08 本章核心总结（TOP3）</a></li>
+<li><a href="#09">09 连载衔接</a></li>
+<li><a href="#10">10 话题标签与系列目录索引</a></li>
+</ul>
+</div>
+</details>
+<article class="article">
+<h1 id="llm022-lora">【LLM全栈工程·第02章】2 小时跑通最小闭环：从开源模型下载到 LoRA 微调再到推理服务</h1>
+<blockquote>
+<p>本篇为「LLM全栈工程」连载第 02 章（Voice前沿）。主标题以上为准；备选标题（供运营选用，不进正文）：① 别先啃预训练！2 小时先跑通“下载→微调→部署”最小生产线；② 大模型全栈第一课：一张 24GB 显卡跑通 LoRA 微调加 vLLM 服务；③ 从只会调 API 到亲手微调部署，只需要这三步。</p>
+</blockquote>
+<hr />
+<h2 id="_1">单篇内容卡（排版本忽略）</h2>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>章节定位</td>
+<td>开篇实操章：用“下载底座 → LoRA 微调 → 合并导出 → vLLM 服务”四步跑通全栈最小闭环，建立主线工程 v0.1</td>
+</tr>
+<tr>
+<td>适用场景</td>
+<td>个人学习（单卡 16–24GB）；小团队验证领域微调想法；企业 PoC 前先通链路；无卡用户给云 GPU 路径</td>
+</tr>
+<tr>
+<td>核心知识点</td>
+<td>最小闭环五段模型；LoRA 原理一句话；LlamaFactory 数据集注册与训练；adapter 合并；vLLM OpenAI 兼容服务</td>
+</tr>
+<tr>
+<td>技术选型</td>
+<td>底座模型（7B/3B/1.5B 三档）、微调框架（LlamaFactory vs TRL）、推理框架（vLLM vs llama.cpp）对比</td>
+</tr>
+<tr>
+<td>分步实操</td>
+<td>环境准备 → 下载模型 → 合成演示数据集 → LoRA 训练 → 合并导出 → vLLM 服务 → 前后对比验收</td>
+</tr>
+<tr>
+<td>参数详解</td>
+<td>lora_rank/alpha、learning_rate、epochs、cutoff_len、batch/accum、max_model_len、gpu-memory-utilization</td>
+</tr>
+<tr>
+<td>踩坑排查</td>
+<td>显存 OOM、模板不匹配胡言乱语、数据集格式错 loss 不降、合并后加载失败、客户端 model 名 404、CUDA 环境坑</td>
+</tr>
+<tr>
+<td>进阶优化</td>
+<td>QLoRA 4bit 降显存；数据合成脚本思路；微调前后基线对比；为后续 DPO/部署章节铺路</td>
+</tr>
+<tr>
+<td>本章 TOP3</td>
+<td>见文末</td>
+</tr>
+<tr>
+<td>下章预告</td>
+<td>第 03 章：预训练到底在练什么</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="01">01 开篇导语</h2>
+<p>上一章我们画了一张全栈地图：一条大模型生产线 = 数据 → 预训练 → 微调/对齐 → 部署 → 推理优化 → 上线运维。</p>
+<p>这一章不讲理论，只干一件事：<strong>把它跑通。</strong></p>
+<p>很多人的学习路径是这样的：先研究三个月预训练论文，再搭半天的多卡训练环境，结果连“微调后的模型到底长什么样”都没见过。我们反着来：<strong>用一张 24GB 显卡（没有就用云 GPU），2 小时跑完“下载开源底座 → LoRA 微调 → 合并模型 → 起一个 OpenAI 兼容的推理服务”的最小闭环</strong>，让一个领域 Demo 模型真正开口回答问题。</p>
+<p>为什么必须先通？</p>
+<p>因为链路没跑通之前，你根本不知道问题出在数据、训练还是部署；而链路一旦通了，后面每一章学到的数据清洗、预训练、对齐、量化、编译优化，都是在往这条已经能跑的链路上<strong>替换更好的零件</strong>——而不是从零拼一辆不知道能不能发动的车。</p>
+<p>本章交付物：一个可复现的工程目录（含演示数据生成脚本、训练配置、合并配置、服务启动与验收脚本）。跑完，你就有自己的第一条 LLM 全栈生产线。</p>
+<blockquote>
+<p>硬性前置：一张 NVIDIA 显卡（显存建议 16GB 以上，24GB 最佳；8GB 也能用文末降级路径），或一台按小时计费的云 GPU 主机。CPU 只能完成“下载＋推理”演示，2 小时内跑微调不现实。</p>
+</blockquote>
+<hr />
+<h2 id="02">02 最小闭环长什么样</h2>
+<p>先明确边界：本章<strong>不做增量预训练、不做 RLHF、不做量化调优</strong>，只打通“能改模型、能出服务”的最小链路：</p>
+<pre><code class="language-text">开源底座模型（Qwen2.5 系列，以官方仓库当日可下载版本为准）
+   ↓ ① 数据：合成 120 条“公司帮助台”规则问答
+   ↓ ② LoRA 微调：只训练一小撮低秩参数，让模型学会私有规则
+LoRA adapter（几十 MB 的增量权重）
+   ↓ ③ 合并导出：把 adapter 合并回底座，得到可直接部署的模型
+领域微调模型
+   ↓ ④ vLLM 服务：OpenAI 兼容接口 localhost:8000
+业务代码调用：curl / OpenAI SDK
+</code></pre>
+<p>三个关键设计，先讲清楚为什么。</p>
+<p><strong>① 为什么用 LoRA，不直接全参微调？</strong>
+全参微调要把 7B 模型的全部参数和优化器状态装进显存，24GB 单卡非常吃力。LoRA（Low-Rank Adaptation，低秩适配）只冻结原模型、额外训练一小撮低秩矩阵，通常只占全部参数的 1% 以内，显存和算力需求大幅下降，中小数据量下效果与全参微调差距很小。<strong>它是单卡玩家和中小团队的事实标准起步方案。</strong></p>
+<p><strong>② 为什么先“合成数据”？</strong>
+本章目的是通链路，不是做数据集。为了在 2 小时内让模型产生“肉眼可见”的变化，我们用一段脚本把 6 条私有规则扩写成 120 条问答——这本身就是工业界“规则→合成数据”的最小版本。真正的数据清洗与质量体系，第 04–10 章再展开。</p>
+<p><strong>③ 为什么用 vLLM？</strong>
+vLLM 是目前开源生态里部署最普及的推理框架之一，提供 OpenAI 兼容接口，业务代码几乎零改动。先学会它，后面第 27 章做框架横向对比、第 28 章再深挖参数调优。</p>
+<blockquote>
+<p>记住本章主线：<strong>模型不是用来“训练完”的，是用来“上线被调用”的。</strong> 所以每一步都以“能不能被 API 调到”为验收标准。</p>
+</blockquote>
+<hr />
+<h2 id="03">03 技术选型：三组关键选择</h2>
+<h3 id="31">3.1 底座模型怎么选</h3>
+<table>
+<thead>
+<tr>
+<th>档位</th>
+<th>代表（示例）</th>
+<th>显存门槛（推理）</th>
+<th>适合谁</th>
+<th>本章结论</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>7B 档</td>
+<td>Qwen2.5-7B-Instruct 类</td>
+<td>24GB 左右更从容</td>
+<td>想体验真实微调效果、显卡 24GB</td>
+<td>主推</td>
+</tr>
+<tr>
+<td>3B 档</td>
+<td>Qwen2.5-3B-Instruct 类</td>
+<td>12–16GB</td>
+<td>显卡 16GB 上下</td>
+<td>备选</td>
+</tr>
+<tr>
+<td>1.5B 档</td>
+<td>Qwen2.5-1.5B-Instruct 类</td>
+<td>8GB（配合量化）</td>
+<td>显存小、只想通链路</td>
+<td>降级路径</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>模型选择原则：<strong>先选你能跑得动的最大模型，再谈效果</strong>。模型名与版本以 Hugging Face / ModelScope 当日可下载的官方仓库为准，不要用记忆中的旧版本号写死。</p>
+</blockquote>
+<h3 id="32">3.2 微调框架怎么选</h3>
+<table>
+<thead>
+<tr>
+<th>方案</th>
+<th>优点</th>
+<th>缺点</th>
+<th>适合谁</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>LlamaFactory（本章选）</td>
+<td>配置文件驱动、内置大量数据集格式与模板、CLI/WebUI 双入口、社区资料多</td>
+<td>想深度魔改训练逻辑时不如直接写 Trainer</td>
+<td>第一次跑通、中小团队日常微调</td>
+</tr>
+<tr>
+<td>TRL（Hugging Face）</td>
+<td>与 transformers 生态一体，SFT/DPO/PPO 全家桶</td>
+<td>需要自己写更多训练脚本与配置</td>
+<td>想深入理解训练细节、后续做 RLHF</td>
+</tr>
+<tr>
+<td>自研训练脚本</td>
+<td>完全可控</td>
+<td>开发量大、易踩坑</td>
+<td>有特殊需求的大团队</td>
+</tr>
+</tbody>
+</table>
+<p>结论：<strong>本章用 LlamaFactory 的 CLI</strong>——它把“数据集注册、模板、LoRA、导出”这些最容易出错的地方封装好了，2 小时目标只能选它。</p>
+<h3 id="33">3.3 推理框架怎么选</h3>
+<table>
+<thead>
+<tr>
+<th>方案</th>
+<th>优点</th>
+<th>缺点</th>
+<th>适合谁</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>vLLM（本章选）</td>
+<td>吞吐高、OpenAI 兼容、社区最普及</td>
+<td>对 Windows 原生支持弱（建议 Linux/WSL2/容器）</td>
+<td>Linux 服务端部署</td>
+</tr>
+<tr>
+<td>llama.cpp</td>
+<td>单文件、CPU/GPU 通吃、GGUF 量化</td>
+<td>大并发吞吐一般</td>
+<td>个人本机、边缘设备</td>
+</tr>
+<tr>
+<td>SGLang / TensorRT-LLM</td>
+<td>各有极致场景</td>
+<td>上手门槛更高</td>
+<td>第 27–30 章再展开</td>
+</tr>
+</tbody>
+</table>
+<p>结论：<strong>服务端演示用 vLLM</strong>；如果你的机器是 Windows 且不想装 WSL，可以先用 llama.cpp 跑通“推理”这一步，微调仍建议在 Linux/云 GPU 上做。</p>
+<hr />
+<h2 id="04-2-8-step">04 分步实操：2 小时跑通（约 8 个 Step）</h2>
+<h3 id="step-0-5">Step 0 建工程目录（5 分钟）</h3>
+<p>在 Linux 服务器（或云 GPU 主机）上执行：</p>
+<pre><code class="language-bash">mkdir -p llm-demo/{data,configs,models,outputs,scripts}
+cd llm-demo
+</code></pre>
+<p>最终目录结构（本章所有文件都按这个路径放）：</p>
+<pre><code class="language-text">llm-demo/
+├── data/            # 数据集与 dataset_info.json
+├── configs/         # 训练/合并 YAML 配置
+├── models/          # 合并导出后的模型
+├── outputs/         # LoRA adapter 输出
+└── scripts/         # 数据合成与验收脚本
+</code></pre>
+<blockquote>
+<p>提示：Windows 用户建议用 WSL2 或云 GPU 主机；如果只想先看效果，也可以跳过训练，直接下载官方 Instruct 模型跑 vLLM。</p>
+</blockquote>
+<h3 id="step-1-15">Step 1 装环境（15 分钟）</h3>
+<p>前置：NVIDIA 驱动已装好，能跑 nvidia-smi。然后创建 Python 环境并安装 PyTorch（CUDA 版）与 LlamaFactory：</p>
+<pre><code class="language-bash"># 1. 创建虚拟环境（Python 3.10/3.11 均可）
+python3 -m venv .venv
+source .venv/bin/activate
+
+# 2. 安装 PyTorch（CUDA 12.x 示例；版本号以 pytorch.org 当日为准）
+pip install torch --index-url https://download.pytorch.org/whl/cu124
+
+# 3. 源码安装 LlamaFactory（官方仓库：github.com/hiyouga/LLaMA-Factory）
+git clone https://github.com/hiyouga/LLaMA-Factory.git
+cd LLaMA-Factory
+pip install -e &quot;.[torch,bitsandbytes]&quot;
+cd ..
+
+# 4. 安装推理与客户端依赖
+pip install vllm openai huggingface_hub modelscope
+</code></pre>
+<blockquote>
+<p>备选：不想折腾环境，直接用 PyTorch 官方 CUDA 镜像开容器（tag 以当日官方为准），训练与推理都在容器内完成，避免宿主机 CUDA 版本地狱。</p>
+</blockquote>
+<h3 id="step-2-1030">Step 2 下载底座模型（10–30 分钟，看网速）</h3>
+<p>二选一：海外网络用 Hugging Face，国内推荐 ModelScope。以下载 Qwen2.5-7B-Instruct 为例（显存小的换成 3B/1.5B 同名仓库即可）：</p>
+<pre><code class="language-bash"># 方式 A：Hugging Face（在 llm-demo 目录执行）
+hf download Qwen/Qwen2.5-7B-Instruct --local-dir models/Qwen2.5-7B-Instruct
+
+# 方式 B：ModelScope（国内更快）
+modelscope download --model Qwen/Qwen2.5-7B-Instruct --local_dir models/Qwen2.5-7B-Instruct
+</code></pre>
+<p>下载完成后确认目录里有 config.json、tokenizer 相关文件与 safetensors 权重文件。</p>
+<blockquote>
+<p>为什么先下到本地而不是让框架现下？一是训练与推理要复用同一份权重，二是断点续传与离线部署都依赖本地目录。这也是工业界的标准做法：<strong>权重永远有本地副本和版本号</strong>。</p>
+</blockquote>
+<h3 id="step-3-10">Step 3 合成演示数据集（10 分钟）</h3>
+<p>本章 Demo 主题：<strong>公司内部 IT 帮助台</strong>。底座模型不知道你们公司的打印机型号、VPN 地址、工单流程，微调后它才会“按公司规则回答”——这正是私有化微调最常见的价值点。</p>
+<p>先在 data 目录注册数据集（LlamaFactory 靠 dataset_info.json 找数据）：</p>
+<pre><code class="language-json">// data/dataset_info.json
+{
+  &quot;demo_helpdesk&quot;: {
+    &quot;file_name&quot;: &quot;demo_helpdesk.jsonl&quot;,
+    &quot;formatting&quot;: &quot;alpaca&quot;,
+    &quot;columns&quot;: {
+      &quot;prompt&quot;: &quot;instruction&quot;,
+      &quot;query&quot;: &quot;input&quot;,
+      &quot;response&quot;: &quot;output&quot;
+    }
+  }
+}
+</code></pre>
+<p>再保存下面的生成脚本为 scripts/make_demo_data.py，运行后生成 120 条问答：</p>
+<pre><code class="language-python"># scripts/make_demo_data.py —— 规则 -&gt; 合成问答（最小工业版）
+import json
+import random
+
+rules = [
+    {
+        &quot;title&quot;: &quot;打印机&quot;,
+        &quot;questions&quot;: [
+            &quot;打印机连不上怎么办？&quot;,
+            &quot;打印一直提示卡纸，怎么处理？&quot;,
+            &quot;公司打印机添加不了，报错怎么办？&quot;,
+            &quot;打印出来的文件很模糊，该找谁？&quot;,
+        ],
+        &quot;answer&quot;: &quot;【故障分类】办公设备
+【处理步骤】1. 检查打印机电源与网络指示灯；2. 重启打印机；3. 在电脑上删除并重新添加打印机（型号 HP LaserJet M405）；4. 仍失败请提交 IT 工单并注明打印机 IP。
+【自助入口】http://it.example.local/printer&quot;,
+    },
+    {
+        &quot;title&quot;: &quot;WiFi&quot;,
+        &quot;questions&quot;: [
+            &quot;办公室 WiFi 连不上怎么办？&quot;,
+            &quot;访客 WiFi 密码是多少？&quot;,
+            &quot;WiFi 能连但上不了网，怎么排查？&quot;,
+        ],
+        &quot;answer&quot;: &quot;【故障分类】网络连接
+【处理步骤】1. 确认连接的是公司员工 SSID：Corp-WiFi；2. 忘记网络后重新输入域账号密码；3. 仍无法上网请刷新 DHCP 或换网口测试；4. 故障持续请提交 IT 工单。
+【自助入口】http://it.example.local/network&quot;,
+    },
+    {
+        &quot;title&quot;: &quot;VPN&quot;,
+        &quot;questions&quot;: [
+            &quot;在家连不上公司 VPN 怎么办？&quot;,
+            &quot;VPN 一直提示账号锁定，怎么处理？&quot;,
+            &quot;出差需要访问内网，如何申请 VPN？&quot;,
+        ],
+        &quot;answer&quot;: &quot;【故障分类】远程接入
+【处理步骤】1. 使用公司统一客户端并选择入口 vpn.example.local；2. 账号连续输错 5 次会锁定，等待 30 分钟或联系 IT 解锁；3. 首次使用需先提交 VPN 权限申请。
+【自助入口】http://it.example.local/vpn&quot;,
+    },
+    {
+        &quot;title&quot;: &quot;邮箱&quot;,
+        &quot;questions&quot;: [
+            &quot;邮箱收不到外部邮件怎么办？&quot;,
+            &quot;邮箱容量满了怎么清理？&quot;,
+            &quot;如何申请新的部门邮箱？&quot;,
+        ],
+        &quot;answer&quot;: &quot;【故障分类】邮件服务
+【处理步骤】1. 先检查垃圾邮件箱与隔离区；2. 邮箱容量超过 90% 时请清理大附件并清空已删除邮件；3. 新邮箱由部门主管邮件审批后开通。
+【自助入口】http://it.example.local/mail&quot;,
+    },
+    {
+        &quot;title&quot;: &quot;软件安装&quot;,
+        &quot;questions&quot;: [
+            &quot;想装软件但没有管理员权限怎么办？&quot;,
+            &quot;公司软件中心里找不到需要的工具怎么办？&quot;,
+            &quot;安装软件提示被安全策略阻止怎么办？&quot;,
+        ],
+        &quot;answer&quot;: &quot;【故障分类】软件分发
+【处理步骤】1. 优先从公司软件中心安装；2. 软件中心没有时提交软件申请工单，注明用途与 license 信息；3. 被安全策略阻止时不要绕过，等待审批后由 IT 推送安装。
+【自助入口】http://it.example.local/software&quot;,
+    },
+    {
+        &quot;title&quot;: &quot;账号&quot;,
+        &quot;questions&quot;: [
+            &quot;账号被锁定了怎么办？&quot;,
+            &quot;忘记密码如何重置？&quot;,
+            &quot;新同事的账号什么时候能开通？&quot;,
+        ],
+        &quot;answer&quot;: &quot;【故障分类】账号权限
+【处理步骤】1. 密码重置请访问自助平台 http://account.example.local；2. 账号锁定超过 30 分钟未恢复请拨打 IT 热线；3. 新员工账号在 HR 入职流程完成后 1 个工作日内开通。
+【自助入口】http://account.example.local&quot;,
+    },
+]
+
+random.seed(42)
+rows = []
+for rule in rules:
+    for _ in range(20):
+        rows.append(
+            {
+                &quot;instruction&quot;: &quot;你是公司内部 IT 帮助台助手。请严格按公司规则回答，不要编造型号、地址或流程。&quot;,
+                &quot;input&quot;: random.choice(rule[&quot;questions&quot;]),
+                &quot;output&quot;: rule[&quot;answer&quot;],
+            }
+        )
+
+random.shuffle(rows)
+with open(&quot;data/demo_helpdesk.jsonl&quot;, &quot;w&quot;, encoding=&quot;utf-8&quot;) as f:
+    for row in rows:
+        f.write(json.dumps(row, ensure_ascii=False) + &quot;
+&quot;)
+
+print(&quot;generated:&quot;, len(rows), &quot;rows -&gt; data/demo_helpdesk.jsonl&quot;)
+</code></pre>
+<p>运行并抽查：</p>
+<pre><code class="language-bash">python scripts/make_demo_data.py
+head -n 2 data/demo_helpdesk.jsonl
+</code></pre>
+<blockquote>
+<p>说明：这里 URL、型号都是占位示例，正式使用请替换成真实知识，并走第 04–10 章的数据清洗、去重与质检流程。<strong>演示数据可以合成，生产数据必须较真。</strong></p>
+</blockquote>
+<h3 id="step-4-lora-2040">Step 4 LoRA 微调（20–40 分钟）</h3>
+<p>保存训练配置为 configs/demo_sft.yaml（24GB 显卡主推；显存小于 20GB 时加最后两行开 QLoRA）：</p>
+<pre><code class="language-yaml"># configs/demo_sft.yaml
+model_name_or_path: models/Qwen2.5-7B-Instruct
+template: qwen
+stage: sft
+finetuning_type: lora
+dataset_dir: data
+dataset: demo_helpdesk
+cutoff_len: 1024
+max_samples: 120
+
+per_device_train_batch_size: 2
+gradient_accumulation_steps: 4
+learning_rate: 2.0e-4
+num_train_epochs: 3.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.1
+
+bf16: true
+lora_rank: 16
+lora_alpha: 32
+lora_dropout: 0.05
+
+logging_steps: 5
+save_steps: 20
+output_dir: outputs/helpdesk-lora
+plot_loss: true
+
+# 显存 &lt; 20GB 时追加（QLoRA 4bit）：
+# quantization_bit: 4
+# quantization_method: bitsandbytes
+</code></pre>
+<p>执行训练（在 llm-demo 目录、虚拟环境内）：</p>
+<pre><code class="language-bash">CUDA_VISIBLE_DEVICES=0 llamafactory-cli train configs/demo_sft.yaml
+</code></pre>
+<p>看到类似 “TrainOutput(global_step=…, training_loss=…)”、“Saved adapter model” 即成功。adapter 会输出到 outputs/helpdesk-lora。</p>
+<blockquote>
+<p>训练中途可以另开终端用 nvidia-smi 观察显存：7B + LoRA（BF16）约占用 18–22GB；如果接近 24GB 上限，把 cutoff_len 降到 512 或 batch 改为 1 即可。</p>
+</blockquote>
+<h3 id="step-5-5">Step 5 合并导出（5 分钟）</h3>
+<p>LoRA adapter 只是增量权重，直接部署要同时加载底座和 adapter，容易出版本问题。工业界标准做法：<strong>训练完合并成一个完整模型</strong>再交付。</p>
+<p>保存合并配置为 configs/export.yaml：</p>
+<pre><code class="language-yaml"># configs/export.yaml
+model_name_or_path: models/Qwen2.5-7B-Instruct
+adapter_name_or_path: outputs/helpdesk-lora
+template: qwen
+finetuning_type: lora
+export_dir: models/helpdesk-merged
+export_size: 2
+export_legacy_format: false
+</code></pre>
+<p>执行：</p>
+<pre><code class="language-bash">llamafactory-cli export configs/export.yaml
+</code></pre>
+<p>导出完成后检查 models/helpdesk-merged 目录包含 config.json、tokenizer 相关文件与 safetensors 权重，即合并成功。</p>
+<h3 id="step-6-vllm-5">Step 6 起 vLLM 服务（5 分钟）</h3>
+<pre><code class="language-bash">vllm serve models/helpdesk-merged \
+  --served-model-name helpdesk \
+  --max-model-len 4096 \
+  --gpu-memory-utilization 0.90 \
+  --port 8000
+</code></pre>
+<p>看到 “Application startup complete” 后，另开终端验证：</p>
+<pre><code class="language-bash">curl http://localhost:8000/v1/chat/completions \
+  -H &quot;Content-Type: application/json&quot; \
+  -d '{&quot;model&quot;:&quot;helpdesk&quot;,&quot;messages&quot;:[{&quot;role&quot;:&quot;user&quot;,&quot;content&quot;:&quot;打印机连不上怎么办？&quot;}],&quot;max_tokens&quot;:300}'
+</code></pre>
+<blockquote>
+<p>说明：curl 命令中的换行符是“反斜杠续行”，复制到 Windows PowerShell 时请改成一行，或直接用下面的 Python 脚本。</p>
+</blockquote>
+<h3 id="step-7-10">Step 7 验收：微调前后对比（10 分钟）</h3>
+<p>保存 scripts/ask.py 并运行：</p>
+<pre><code class="language-python"># scripts/ask.py —— 调用本地 vLLM 服务并计时
+import time
+from openai import OpenAI
+
+client = OpenAI(base_url=&quot;http://localhost:8000/v1&quot;, api_key=&quot;EMPTY&quot;)
+
+questions = [
+    &quot;打印机连不上怎么办？&quot;,
+    &quot;在家连不上公司 VPN 怎么办？&quot;,
+    &quot;公司 WiFi 连不上，怎么排查？&quot;,
+]
+
+for q in questions:
+    start = time.time()
+    resp = client.chat.completions.create(
+        model=&quot;helpdesk&quot;,
+        messages=[{&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: q}],
+        temperature=0.2,
+        max_tokens=300,
+    )
+    cost = time.time() - start
+    print(&quot;问题：&quot;, q)
+    print(&quot;回答：&quot;, resp.choices[0].message.content)
+    print(&quot;耗时： %.2f 秒&quot; % cost)
+    print(&quot;-&quot; * 40)
+</code></pre>
+<pre><code class="language-bash">python scripts/ask.py
+</code></pre>
+<p>如果回答里出现“HP LaserJet M405”“vpn.example.local”“提交 IT 工单”等私有规则，说明微调生效；再回到 Step 6 之前，用同样的问题问未微调的官方模型（把模型目录换回 models/Qwen2.5-7B-Instruct），就能看到“底座会一本正经地编一个不存在的打印机型号”——<strong>这就是私有化微调的价值</strong>。</p>
+<h3 id="_2">时间预算小结</h3>
+<table>
+<thead>
+<tr>
+<th>步骤</th>
+<th>耗时</th>
+<th>失败高频点</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>环境安装</td>
+<td>15 分钟</td>
+<td>CUDA 版本、pip 源</td>
+</tr>
+<tr>
+<td>下载模型</td>
+<td>10–30 分钟</td>
+<td>网络、磁盘空间</td>
+</tr>
+<tr>
+<td>数据合成</td>
+<td>10 分钟</td>
+<td>JSON 格式、dataset_info 拼写</td>
+</tr>
+<tr>
+<td>LoRA 训练</td>
+<td>20–40 分钟</td>
+<td>显存 OOM、路径不对</td>
+</tr>
+<tr>
+<td>合并导出</td>
+<td>5 分钟</td>
+<td>adapter 路径、模板不匹配</td>
+</tr>
+<tr>
+<td>vLLM 服务与验收</td>
+<td>15 分钟</td>
+<td>model 名不一致、端口占用</td>
+</tr>
+</tbody>
+</table>
+<h2 id="05">05 参数详解：本章用到的核心配置</h2>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>含义（大白话）</th>
+<th>本章取值</th>
+<th>调优方向</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>lora_rank</td>
+<td>LoRA 低秩矩阵的“宽度”，越大容量越大</td>
+<td>16</td>
+<td>数据多/任务难可试 32–64；数据少用 8–16 防过拟合</td>
+</tr>
+<tr>
+<td>lora_alpha</td>
+<td>LoRA 缩放系数，通常与 rank 按 2:1 搭配</td>
+<td>32</td>
+<td>alpha 偏大=改动幅度大；一般保持 alpha=2×rank 起步</td>
+</tr>
+<tr>
+<td>lora_dropout</td>
+<td>训练时随机丢弃比例，防过拟合</td>
+<td>0.05</td>
+<td>数据少可加到 0.1</td>
+</tr>
+<tr>
+<td>learning_rate</td>
+<td>每步参数更新步长</td>
+<td>2e-4</td>
+<td>LoRA 常见 1e-4~3e-4；全参 SFT 常用 1e-5~2e-5</td>
+</tr>
+<tr>
+<td>num_train_epochs</td>
+<td>全量数据过几遍</td>
+<td>3</td>
+<td>数据干净可 2–3；数据少或任务简单可 3–5（要盯验证 loss）</td>
+</tr>
+<tr>
+<td>cutoff_len</td>
+<td>单样本最大 token 长度，超长截断</td>
+<td>1024</td>
+<td>长文档任务要加长，代价是显存与训练时间</td>
+</tr>
+<tr>
+<td>per_device_train_batch_size × gradient_accumulation_steps</td>
+<td>等效 batch = 两者相乘</td>
+<td>2×4=8</td>
+<td>等效 batch 8–32 是 SFT 常见区间</td>
+</tr>
+<tr>
+<td>warmup_ratio</td>
+<td>前多少比例步数线性升温</td>
+<td>0.1</td>
+<td>数据少可 0.03–0.1；防止起步震荡</td>
+</tr>
+<tr>
+<td>max_model_len（vLLM）</td>
+<td>服务支持的最大上下文长度</td>
+<td>4096</td>
+<td>长上下文需求再加，显存不够就降</td>
+</tr>
+<tr>
+<td>gpu-memory-utilization</td>
+<td>vLLM 最多用多少比例显存</td>
+<td>0.90</td>
+<td>留一点给驱动与并发缓冲，别设 1.0</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>记住一条铁律：<strong>参数没有“唯一最优”，只有“场景最优”</strong>。任何参数改动都要配一次微调前后对比，否则就是玄学调参（第 18 章专门讲实验管理）。</p>
+</blockquote>
+<hr />
+<h2 id="06-3">06 高频踩坑排查（本章至少会遇到 3 个）</h2>
+<p><strong>坑 1：训练时 CUDA Out of Memory</strong>
+症状：刚起步就报 torch.OutOfMemoryError。
+原因：7B 模型 + 优化器 + 激活值超过显存。
+解法（按顺序试）：把 cutoff_len 降到 512 → batch 改 1 → 开 QLoRA 4bit（configs 里追加 quantization_bit: 4）→ 换 3B 模型。<strong>不要一上来就买显卡，先降配置跑通。</strong></p>
+<p><strong>坑 2：训练正常，但回答是乱码/复读机</strong>
+症状：loss 在降，生成内容却像“啊啊啊…”。
+原因：chat template 与模型不匹配，或 temperature 太高、max_tokens 太小。
+解法：确认 configs 里 template 与底座一致（Qwen 用 qwen，Llama 用 llama）；推理时 temperature 设 0.2 左右，max_tokens 给足；先 curl 直接问官方模型排除服务问题。</p>
+<p><strong>坑 3：loss 几乎不降，或训完还是答非所问</strong>
+症状：训练 loss 从 0.0x 开始或一直震荡。
+原因：数据集没被正确读取（dataset_info 拼写错、路径错），或 instruction/input/output 字段没对上。
+解法：训练日志里看 “Dataset: demo_helpdesk” 与样本数是否为 120；打印一条预处理后的样本检查模板拼接；确认 data/dataset_info.json 的 columns 映射正确。</p>
+<p><strong>坑 4：合并导出后模型加载报错/尺寸不匹配</strong>
+症状：export 报 adapter 与 base 的 shape 不一致，或服务启动时 config 报错。
+原因：底座路径与训练时不一致、adapter 目录选错、合并时 template 写错。
+解法：export 配置的 model_name_or_path 必须与训练配置完全同目录；adapter_name_or_path 指到 outputs/helpdesk-lora（含 adapter_config.json 的目录）；合并后先本地 transformers 加载一次再上服务。</p>
+<p><strong>坑 5：客户端报 404 model not found</strong>
+症状：curl/OpenAI SDK 能连上 8000 端口，但报 model 不存在。
+原因：请求里的 model 名与 vllm serve 的 --served-model-name 不一致。
+解法：统一用 helpdesk；或用 curl http://localhost:8000/v1/models 查看服务端实际模型名。</p>
+<p><strong>坑 6：pip 装 torch/vllm 装了半天还失败</strong>
+症状：版本冲突、找不到 cu124 索引、vllm 编译报错。
+原因：Python 版本过新/过旧，或没先装好 CUDA 版 torch。
+解法：用 Python 3.10–3.11 + 官方 cu124 索引装 torch 后再装 vllm；最稳的是直接用 LlamaFactory/vLLM 官方 Docker 镜像，宿主只负责装 NVIDIA 驱动。</p>
+<blockquote>
+<p>如果 2 小时被环境问题吃掉 1.5 小时，正确姿势是：<strong>换官方镜像或云 GPU 模板机</strong>，把时间花在链路上而不是编译上。</p>
+</blockquote>
+<hr />
+<h2 id="07">07 进阶优化：跑通之后还能做什么</h2>
+<p><strong>① QLoRA 降显存</strong>：把量化与 LoRA 结合，7B 模型在 8–12GB 显卡上也能微调（效果会比 BF16 LoRA 略降，需对比验证），这是第 31 章量化的提前预习。</p>
+<p><strong>② 建立“微调前后基线”</strong>：把 Step 7 的 3 个问题扩成 20–50 条领域评测题，微调前后各跑一遍并记录回答，这是第 20 章评估体系的最小雏形。<strong>没有基线的微调，等于蒙眼开车。</strong></p>
+<p><strong>③ 用 Git 管好“模型版本”</strong>：把 models/Qwen2.5-7B-Instruct（底座）、outputs/helpdesk-lora（adapter）、models/helpdesk-merged（合并产物）分别登记版本与训练配置 hash，后续第 44 章模型迭代就靠这套习惯。</p>
+<p><strong>④ 走向对齐</strong>：把 Step 4 的 stage 从 sft 换成 dpo（需要偏好数据），就能体验 DPO 对齐；第 23–25 章会把奖励模型、RLHF/PPO、RLAIF 讲透。</p>
+<p><strong>⑤ 换“真领域”</strong>：把帮助台规则换成你的业务知识（产品手册、客服话术、内部 SOP），数据量从 120 扩到几千条，就是企业 PoC 的真实起点——第 42 章会讲完整立项流程。</p>
+<h2 id="08-top3">08 本章核心总结（TOP3）</h2>
+<p><strong>TOP1</strong>：最小闭环 = “下载底座 → LoRA 微调 → 合并导出 → vLLM 服务 → API 验收”五步；先通链路再谈优化，任何一步跑不通都先降级（小模型/QLoRA/短上下文），不要卡在环境上。</p>
+<p><strong>TOP2</strong>：LoRA 是单卡微调的事实标准起步方案——冻结原模型只训 1% 以内的低秩参数；数据、模板、路径是三个最容易出错也最值得先检查的点。</p>
+<p><strong>TOP3</strong>：微调的价值要用“前后对比”证明：同一条私有规则问题，底座会一本正经地编造，微调后按公司规则回答。<strong>从第一天就建立评测基线与模型版本习惯</strong>，后面所有章节的优化才有落点。</p>
+<hr />
+<h2 id="09">09 连载衔接</h2>
+<p>上一章（第 01 章）给了你全栈地图；本章把地图上“下载→微调→部署”这一段真正跑通，主线工程 v0.1 建立。</p>
+<p>下一章我们回到流水线最上游，把“为什么数据决定模型上限”讲透：【第 03 章】预训练到底在练什么——整体架构、训练逻辑与关键概念。你将第一次看清：你微调的底座模型，当年是怎么被“喂”出来的。</p>
+<hr />
+<h2 id="10">10 话题标签与系列目录索引</h2>
+<p>话题标签：<strong>#LLM全栈工程 #大模型 #LoRA微调 #vLLM #开源模型 #工程实战</strong>（Voice前沿 出品，欢迎收藏追更）</p>
+<p><strong>系列目录（46 章，随连载持续更新）</strong></p>
+<p>第 0 阶段·开篇引路
+- 01 一条大模型生产线全程发生了什么
+- 02 2 小时跑通最小闭环（本篇）</p>
+<p>第 1 阶段·预训练工程·数据核心层
+- 03 预训练整体架构与训练逻辑
+- 04 数据管道从零构建
+- 05 数据清洗规范与脏数据剔除
+- 06 文本过滤实战
+- 07 数据去重算法
+- 08 敏感数据脱敏
+- 09 数据质量打分体系
+- 10 领域专属数据构建
+- 11 增量预训练方案
+- 12 预训练超参选型与硬件适配
+- 13 断点续训、收敛判断与失败排查</p>
+<p>第 2 阶段·微调与对齐体系
+- 14 全维度微调技术拆解
+- 15 SFT 监督微调实战
+- 16 SFT 数据集构建与标注规范
+- 17 微调模板设计
+- 18 微调超参调优策略
+- 19 过拟合、欠拟合与灾难遗忘
+- 20 微调效果评估体系
+- 21 多轮对话微调专项
+- 22 模型蒸馏实战
+- 23 奖励模型训练
+- 24 RLHF/PPO 工程落地
+- 25 RLAIF：AI 反馈自动对齐
+- 26 小样本与领域自适应微调</p>
+<p>第 3 阶段·基础部署与推理优化
+- 27 部署框架横向对比
+- 28 vLLM 部署实战与参数调优
+- 29 SGLang 高性能推理落地
+- 30 TensorRT-LLM 固化与加速
+- 31 模型量化实操
+- 32 模型剪枝与蒸馏压缩
+- 33 KV Cache 优化与上下文窗口拓展
+- 34 流式推理封装与高并发服务化</p>
+<p>第 4 阶段·高阶推理编译器极致优化
+- 35 推理编译器核心原理
+- 36 算子融合与计算图编译
+- 37 动态 shape 与显存编译器优化
+- 38 Speculative Decoding 投机推理进阶
+- 39 批量调度与并行深度适配
+- 40 内核重构与编译级量化</p>
+<p>第 5 阶段·全栈工程联调与项目落地
+- 41 全链路串联：数据到上线一体化流程
+- 42 领域大模型定制化落地
+- 43 高并发生产适配与端侧部署
+- 44 模型迭代升级与性能对标评测
+- 45 线上问题闭环排查
+- 46 工程化最佳实践汇总（手册终章）</p>
+<hr />
+<p><em>本文由 Voice前沿 出品 · 转载注明出处 · 下一篇：第 03 章 预训练到底在练什么</em></p>
+</article>
+<nav class="prevnext"><a href="ch01.html">← 第 01 章 【LLM全栈工程·第01章】一条大模型生产线全程发生了什么？0 基础也能看懂的 LLM 全栈地图与学习路线</a><a href="ch03.html" style="text-align:right">第 03 章 【LLM全栈工程·第03章】预训练到底在练什么？整体架构、训练逻辑与关键概念 →</a></nav>
+</main>
+<footer class="wrap"><p>LLM 全栈工程 · Voice前沿 出品 · 46 章连载 · 收藏即手册</p></footer>
+</body>
+</html>

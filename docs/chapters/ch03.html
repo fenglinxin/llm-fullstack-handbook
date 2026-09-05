@@ -1,0 +1,548 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>【LLM全栈工程·第03章】预训练到底在练什么？整体架构、训练逻辑与关键概念 · LLM 全栈工程</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header"><div class="wrap">
+<a class="brand" href="../index.html">LLM 全栈工程<small>LLM 工业级全栈工程落地手册 · 46 章</small></a>
+<nav><a href="../index.html">目录</a><a href="https://github.com/">GitHub 仓库</a></nav>
+</div></header>
+<main class="wrap">
+<nav class="crumbs"><a href="../index.html">全部章节</a> / 【LLM全栈工程·第03章】预训练到底在练什么？整体架构、训练逻辑与关键概念</nav>
+<details class="toc-box"><summary>本章目录</summary><div class="toc">
+<ul>
+<li><a href="#_1">单篇内容卡（排版本忽略）</a></li>
+<li><a href="#01">01 开篇导语</a></li>
+<li><a href="#02">02 白话原理：大模型是怎么“接龙”接出来的</a><ul>
+<li><a href="#21">2.1 一条文本在模型里走四步</a></li>
+<li><a href="#22">2.2 预训练 = 无监督接龙</a></li>
+<li><a href="#23">2.3 一个容易误解的点：预训练不是“记忆题库”</a></li>
+</ul>
+</li>
+<li><a href="#03">03 训练架构：一场“工业化接龙”是怎么组织的</a><ul>
+<li><a href="#31">3.1 数据管线：先处理，再进训练</a></li>
+<li><a href="#32-sequence-packing">3.2 样本组装：序列打包（Sequence Packing）</a></li>
+<li><a href="#33-loss">3.3 训练循环：前向 → 算 loss → 反向 → 更新</a></li>
+<li><a href="#34-epoch-1-epoch">3.4 Epoch 数：工业预训练通常不到 1 个 epoch</a></li>
+<li><a href="#35">3.5 精度与并行：让“接龙”跑得快</a></li>
+</ul>
+</li>
+<li><a href="#04">04 为什么“数据决定模型上限”</a><ul>
+<li><a href="#41">4.1 三个决定模型效果的因素</a></li>
+<li><a href="#42-data-mixing">4.2 数据配比（Data Mixing）为什么重要</a></li>
+<li><a href="#43-epoch">4.3 Epoch 与数据质量的直觉</a></li>
+</ul>
+</li>
+<li><a href="#05">05 技术选型：不同阶段该用什么框架</a></li>
+<li><a href="#06">06 核心参数与指标：预训练工程师的“仪表盘”</a><ul>
+<li><a href="#61">6.1 核心参数速查</a></li>
+<li><a href="#62">6.2 训练日志里的五个数</a></li>
+</ul>
+</li>
+<li><a href="#07-5-loss">07 分步实操：5 分钟亲眼观察一次“loss 下降”</a><ul>
+<li><a href="#step-1-scriptsmini_pretrainpy">Step 1 保存脚本 scripts/mini_pretrain.py</a></li>
+<li><a href="#step-2">Step 2 运行并记录</a></li>
+<li><a href="#step-3">Step 3 观察三个现象（这就是本章要建立的直觉）</a></li>
+</ul>
+</li>
+<li><a href="#08">08 高频踩坑：新手理解预训练最常见的五个误区</a></li>
+<li><a href="#09">09 进阶优化：从“看懂原理”到“能做预训练工程”</a></li>
+<li><a href="#10-top3">10 本章核心总结（TOP3）</a></li>
+<li><a href="#11">11 连载衔接</a></li>
+<li><a href="#12">12 话题标签与系列目录索引</a></li>
+</ul>
+</div>
+</details>
+<article class="article">
+<h1 id="llm03">【LLM全栈工程·第03章】预训练到底在练什么？整体架构、训练逻辑与关键概念</h1>
+<blockquote>
+<p>本篇为「LLM全栈工程」连载第 03 章（Voice前沿）。主标题以上为准；备选标题（供运营选用，不进正文）：① 大模型不是“教”出来的，是“接龙”接出来的：预训练白话原理；② 为什么数据决定模型上限？预训练架构与训练逻辑一次讲清；③ 从 loss 到 MFU，预训练工程师天天盯的指标到底是什么意思。</p>
+</blockquote>
+<hr />
+<h2 id="_1">单篇内容卡（排版本忽略）</h2>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>章节定位</td>
+<td>进入「预训练工程·数据核心层」的认知打底章：讲清预训练在练什么、怎么练、看什么数</td>
+</tr>
+<tr>
+<td>适用场景</td>
+<td>个人学习补原理；微调工程师理解底座从哪来；小团队评估要不要做增量预训练/全量预训练</td>
+</tr>
+<tr>
+<td>核心知识点</td>
+<td>token 接龙训练逻辑；数据配比与 epoch 直觉；loss/验证 loss/梯度范数/MFU/吞吐；预训练 vs 微调边界</td>
+</tr>
+<tr>
+<td>技术选型</td>
+<td>nanoGPT→DeepSpeed/FSDP→Megatron-LM 的框架梯度；什么规模用什么</td>
+</tr>
+<tr>
+<td>分步实操</td>
+<td>用上一章的帮助台数据跑一个 5 分钟“迷你预训练”，亲眼观察 loss 下降</td>
+</tr>
+<tr>
+<td>参数详解</td>
+<td>全局 batch、序列长度、学习率、精度、数据配比、epoch 数</td>
+</tr>
+<tr>
+<td>踩坑排查</td>
+<td>把预训练当微调跑、只盯 loss、数据配比拍脑袋、精度不当、loss 低≠能力强</td>
+</tr>
+<tr>
+<td>进阶优化</td>
+<td>数据配比实验、scaling law 外推、MFU 优化意识（后续章节展开）</td>
+</tr>
+<tr>
+<td>本章 TOP3</td>
+<td>见文末</td>
+</tr>
+<tr>
+<td>下章预告</td>
+<td>第 04 章：数据管道从零构建</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="01">01 开篇导语</h2>
+<p>上一章你亲手微调了一个模型。但你有没有想过一个问题：<strong>你下载的那个“底座”，当年是怎么来的？</strong></p>
+<p>答案可能颠覆很多人的直觉：底座模型不是被人“教”出来的，而是自己玩“文字接龙”玩出来的。</p>
+<p>把互联网上几千亿 token 的文本喂给一个巨大的 Transformer，让它反复做同一件事——<strong>看完前面的文字，猜下一个字是什么</strong>——猜错的就调整参数。几万亿次接龙之后，它竟然学会了语法、事实、逻辑，甚至推理。</p>
+<p>这个“疯狂接龙”的过程，就叫<strong>预训练（Pre-training）</strong>。</p>
+<p>本章不讲公式推导，只回答三个问题：预训练内部到底发生了什么？数据为什么决定模型上限？预训练工程师每天盯的那几个数是什么意思？看完你会发现，后面数据章节（04–13）里的每一个动作，都能在“接龙游戏”里找到理由。</p>
+<hr />
+<h2 id="02">02 白话原理：大模型是怎么“接龙”接出来的</h2>
+<h3 id="21">2.1 一条文本在模型里走四步</h3>
+<p>任意一段训练文本，在预训练时都会走同样的四步：</p>
+<p><strong>第一步：分词（Tokenization）</strong>
+把文本切成小块。中文可能按字或按词元切，英文按子词切。比如“大模型很能打”会被切成若干个 token——切法由 tokenizer 决定，token 是模型眼中的“最小文字单位”。</p>
+<p><strong>第二步：查表（Embedding）</strong>
+每个 token 查一张向量表，变成一个向量（比如 4096 维的一串数字）。模型不懂文字，只懂数字；embedding 就是“文字的数字身份证”。</p>
+<p><strong>第三步：Transformer 前向计算</strong>
+向量们一层层经过注意力机制和前馈网络。注意力机制负责“看上下文”：预测下一个字时，重点参考前面哪些字。层数越多，能建模的关系越复杂。</p>
+<p><strong>第四步：输出概率并算损失</strong>
+最后一层对词表里每一个 token 输出一个概率：下一个字是“很”的概率多少、“能”的概率多少……然后和真实的下一个字对比，算出损失（loss）。loss 越小，说明模型“接龙”越准。</p>
+<h3 id="22">2.2 预训练 = 无监督接龙</h3>
+<p>关键点来了：<strong>预训练不需要人工标注</strong>。文本的下一句、下一个字天然就在文本里——数据自己就是标签。</p>
+<ul>
+<li>输入：一段文本的前 N 个 token；</li>
+<li>标签：第 N+1 个 token；</li>
+<li>损失：模型预测分布与真实 token 的差距（交叉熵）。</li>
+</ul>
+<p>所以预训练也叫“自监督学习”。模型在训练时并不知道“1+1=2”是知识，它只知道：<strong>在见过的文本里，看到“1+1=”，下一个出现“=”的概率很高</strong>。大量这样的统计规律叠加，模型就从“背概率”里涌现出了能力。</p>
+<h3 id="23">2.3 一个容易误解的点：预训练不是“记忆题库”</h3>
+<p>模型确实会记住高频文本（比如著名歌词），但真正的能力来自<strong>压缩</strong>：为了把几万亿 token 的接龙都预测好，模型被迫把文字背后的规律压缩进参数里——语法规则、世界知识、推理模式。这也是为什么说“预训练的本质是压缩”，压缩得越好，泛化越强。</p>
+<blockquote>
+<p>一句话记住本章：<strong>预训练 = 让模型在超大语料上无限接龙，把语言规律压缩进参数。</strong> 后面所有数据工作，都是为了让这场接龙“接得更干净、更全面”。</p>
+</blockquote>
+<h2 id="03">03 训练架构：一场“工业化接龙”是怎么组织的</h2>
+<p>玩具接龙一次看一句话，工业预训练一次看<strong>几十万甚至上百万 token</strong>。把规模放大后，训练组织方式有四个关键设计。</p>
+<h3 id="31">3.1 数据管线：先处理，再进训练</h3>
+<p>原始文本不能直接喂给模型，要先走：清洗 → 过滤 → 去重 → 脱敏 → 质量打分 → 配比混合（第 04–10 章逐层展开）。训练侧只接收“已经合格的 token 流”。</p>
+<h3 id="32-sequence-packing">3.2 样本组装：序列打包（Sequence Packing）</h3>
+<p>预训练样本不像微调那样一条条独立，而是把清洗后的文档<strong>按固定长度（如 4096 token）切块</strong>，必要时把短文档拼起来填满一个序列，尽量不浪费。切块时要注意：不能从文档中间随意截断造成语义损坏，工业实现通常按段落/文档边界做优雅切分，并记录文档边界供后续去重与溯源。</p>
+<h3 id="33-loss">3.3 训练循环：前向 → 算 loss → 反向 → 更新</h3>
+<p>一次标准迭代（step）是：</p>
+<pre><code class="language-text">取一个 global batch（比如 2M token）
+  → 前向计算：模型对 batch 内每个位置预测下一个 token
+  → 算平均 loss
+  → 反向传播算梯度
+  → 优化器按学习率更新参数
+  → 记录 loss/梯度范数/吞吐，进入下一步
+</code></pre>
+<p>其中“global batch”由“单卡 batch × 梯度累积 × 并行卡数”放大而来。<strong>预训练看的是 token 总数，不是“条数”</strong>——这是与微调最大的思维差异。</p>
+<h3 id="34-epoch-1-epoch">3.4 Epoch 数：工业预训练通常不到 1 个 epoch</h3>
+<p>微调常跑 3–5 个 epoch（数据少、反复看）。预训练语料有数万亿 token，通常<strong>整个语料只过 0.5–1 遍</strong>，重复看数据会加速过拟合与记忆污染。训练中后期会做“数据退火”（把高质量数据占比提高、学习率下降），而不是简单再来一遍。</p>
+<h3 id="35">3.5 精度与并行：让“接龙”跑得快</h3>
+<ul>
+<li>精度：主流用 BF16 训练（比 FP32 省一半显存且稳定），大规模会用 FP8 混合精度；</li>
+<li>并行：单卡装不下就拆——数据并行（每卡一份模型不同数据）、张量并行（一层拆到多卡）、流水线并行（不同层放不同卡）、上下文并行（长序列拆分）等（第 12 章展开）。</li>
+</ul>
+<hr />
+<h2 id="04">04 为什么“数据决定模型上限”</h2>
+<h3 id="41">4.1 三个决定模型效果的因素</h3>
+<p>模型最终效果由三件事共同决定：<strong>数据质量与配比、模型规模、计算量</strong>。其中数据是“上限”，模型结构是在逼近上限；规模与算力决定你能逼近多少。</p>
+<h3 id="42-data-mixing">4.2 数据配比（Data Mixing）为什么重要</h3>
+<p>真实预训练语料不是一个大杂烩，而是按比例混合：通用网页、代码、数学、书籍、多语种……配比直接影响能力结构：</p>
+<table>
+<thead>
+<tr>
+<th>配比倾向</th>
+<th>模型表现倾向</th>
+<th>常见代价</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>网页过多</td>
+<td>通用对话流畅</td>
+<td>数学/代码弱</td>
+</tr>
+<tr>
+<td>代码过多</td>
+<td>代码与逻辑推理强</td>
+<td>通用闲聊生硬</td>
+</tr>
+<tr>
+<td>书籍/长文过多</td>
+<td>长文理解好</td>
+<td>短对话风格偏书面</td>
+</tr>
+<tr>
+<td>领域数据过多</td>
+<td>领域强</td>
+<td>通用能力下降（灾难性遗忘的前奏）</td>
+</tr>
+</tbody>
+</table>
+<p><strong>配比没有标准答案</strong>，要靠小规模对照实验摸索（比如 1B 模型上试配比，再放大到 7B/70B）——这是第 10 章“领域专属数据构建”的核心方法。</p>
+<h3 id="43-epoch">4.3 Epoch 与数据质量的直觉</h3>
+<ul>
+<li>数据<strong>脏</strong>（噪声、重复、错误）：模型花大量参数去拟合垃圾，能力被稀释；</li>
+<li>数据<strong>重复</strong>：等于变相缩小语料、放大记忆与过拟合；</li>
+<li>数据<strong>偏</strong>（只有一种风格）：模型只会那一种风格；</li>
+<li>数据<strong>少而精</strong>跑多 epoch：小模型可以用，大模型浪费算力。</li>
+</ul>
+<blockquote>
+<p>所以预训练团队的第一工程能力，不是调模型，而是<strong>把数据管道做干净、把配比做科学</strong>。这也是本专栏把数据放在训练前面的原因。</p>
+</blockquote>
+<h2 id="05">05 技术选型：不同阶段该用什么框架</h2>
+<p>预训练框架的选择，本质是“规模”问题。先看梯度：</p>
+<table>
+<thead>
+<tr>
+<th>框架/方案</th>
+<th>适合规模</th>
+<th>特点</th>
+<th>适合谁</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>自写 PyTorch 循环 / nanoGPT 类</td>
+<td>玩具级（&lt;1B、单卡/CPU）</td>
+<td>代码短、逻辑透明，适合理解原理</td>
+<td>学习、小实验</td>
+</tr>
+<tr>
+<td>Hugging Face Transformers + Trainer</td>
+<td>单机小模型（≤3B 量级）</td>
+<td>生态好、上手快，但大规模并行能力有限</td>
+<td>原型验证</td>
+</tr>
+<tr>
+<td>DeepSpeed ZeRO / PyTorch FSDP</td>
+<td>单机多卡到小集群（1B–10B 常见）</td>
+<td>把参数/梯度/优化器状态分片，显存利用率高</td>
+<td>中小团队主力</td>
+</tr>
+<tr>
+<td>Megatron-LM 类（含其并行策略被多框架复用）</td>
+<td>10B 以上、多节点</td>
+<td>张量/流水线/上下文并行成熟，工业预训练主流血统</td>
+<td>大模型团队</td>
+</tr>
+<tr>
+<td>云厂商训练平台</td>
+<td>任意规模</td>
+<td>集群、调度、断点续训托管</td>
+<td>不想自建集群的团队</td>
+</tr>
+</tbody>
+</table>
+<p>选型结论三句话：</p>
+<ol>
+<li><strong>学原理用最小框架</strong>：nanoGPT/自写循环，几百行代码就能看到完整训练循环；</li>
+<li><strong>中小规模用 DeepSpeed/FSDP</strong>：单机 8 卡跑 7B–13B 预训练/增量预训练的主流选择；</li>
+<li><strong>大规模预训练交给成熟框架或云平台</strong>：不要从零造分布式轮子，那是大厂都不愿重复的工作。</li>
+</ol>
+<blockquote>
+<p>提醒：预训练框架选型不等于“越强越好”。你的瓶颈如果是数据，换 Megatron 不会让 loss 降得更快；<strong>先解决数据，再升级框架</strong>。</p>
+</blockquote>
+<hr />
+<h2 id="06">06 核心参数与指标：预训练工程师的“仪表盘”</h2>
+<h3 id="61">6.1 核心参数速查</h3>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>大白话</th>
+<th>常见参考区间</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>全局 batch（token 数）</td>
+<td>一次更新看多少 token</td>
+<td>小模型 0.5M–2M；大模型 4M–60M 甚至更高</td>
+<td>太大会不稳定，太小效率低，需配合 LR 调整</td>
+</tr>
+<tr>
+<td>序列长度</td>
+<td>一次看多长的上下文</td>
+<td>4096–131072（视模型设计）</td>
+<td>越长越贵，与训练效率、应用场景匹配</td>
+</tr>
+<tr>
+<td>峰值学习率</td>
+<td>参数更新的最大步长</td>
+<td>3e-4~3e-3（随模型变大下降）</td>
+<td>大模型通常用更小 LR</td>
+</tr>
+<tr>
+<td>学习率预热/退火</td>
+<td>先升后降</td>
+<td>warmup 数百到数千步；末期退火</td>
+<td>稳定起步、收尾精修</td>
+</tr>
+<tr>
+<td>精度</td>
+<td>训练数值格式</td>
+<td>BF16 主流，FP8 前沿</td>
+<td>精度错误会表现为 loss spike</td>
+</tr>
+<tr>
+<td>epoch</td>
+<td>语料过几遍</td>
+<td>大语料通常 &lt;1</td>
+<td>重复数据要格外警惕</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>这些区间只是“参考坐标系”，真实取值由模型规模、数据量、硬件共同决定，务必以自己小规模实验为准（第 12 章详解超参选型）。</p>
+</blockquote>
+<h3 id="62">6.2 训练日志里的五个数</h3>
+<table>
+<thead>
+<tr>
+<th>指标</th>
+<th>看什么</th>
+<th>正常信号</th>
+<th>危险信号</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>train loss</td>
+<td>拟合程度</td>
+<td>平稳下降</td>
+<td>不降、突然跳高（spike）</td>
+</tr>
+<tr>
+<td>val loss</td>
+<td>泛化程度</td>
+<td>与 train loss 同步下降</td>
+<td>与 train loss 拉开差距=过拟合</td>
+</tr>
+<tr>
+<td>grad norm</td>
+<td>梯度健康度</td>
+<td>稳定在个位数量级</td>
+<td>突然暴涨=梯度爆炸；长期趋近 0=梯度消失</td>
+</tr>
+<tr>
+<td>tokens/s 或 samples/s</td>
+<td>训练速度</td>
+<td>稳定、可预测</td>
+<td>忽高忽低=IO/网络/掉卡</td>
+</tr>
+<tr>
+<td>MFU</td>
+<td>算力利用率</td>
+<td>越高越好（成熟集群 40%–60% 已属优秀量级，随硬件与模型浮动）</td>
+<td>长期个位数=大概率在空转</td>
+</tr>
+</tbody>
+</table>
+<p><strong>本章先记住一件事：看训练日志不是只看 loss，而是“loss + val loss + grad norm + 吞吐”四件套一起看。</strong> 第 13 章会给完整日志案例与排查手册。</p>
+<h2 id="07-5-loss">07 分步实操：5 分钟亲眼观察一次“loss 下降”</h2>
+<p>理论讲完必须动手。这里用一个<strong>迷你预训练实验</strong>让你亲眼看到：同样的训练循环、同样的 loss 曲线，正是大模型预训练的缩小版。</p>
+<p>前置条件：沿用第 02 章的 llm-demo 工程（有 data/demo_helpdesk.jsonl，装了 torch 与 transformers）。</p>
+<h3 id="step-1-scriptsmini_pretrainpy">Step 1 保存脚本 scripts/mini_pretrain.py</h3>
+<pre><code class="language-python"># scripts/mini_pretrain.py —— 迷你预训练：观察 next-token 接龙与 loss 下降
+import json
+import torch
+from transformers import GPT2Config, GPT2LMHeadModel
+
+# 1. 用第 02 章帮助台问答拼一个小语料（仅做教学演示）
+corpus = []
+with open(&quot;data/demo_helpdesk.jsonl&quot;, encoding=&quot;utf-8&quot;) as f:
+    for line in f:
+        obj = json.loads(line)
+        corpus.append(obj[&quot;input&quot;])
+        corpus.append(obj[&quot;output&quot;])
+text = &quot;\n&quot;.join(corpus)
+print(&quot;corpus chars:&quot;, len(text))
+
+# 2. 字符级分词：把每个字符映射成数字
+chars = sorted(set(text))
+stoi = {ch: i for i, ch in enumerate(chars)}
+ids = [stoi[ch] for ch in text]
+
+# 3. 切成 128 token 的序列块（训练样本）
+SEQ = 128
+chunks = []
+for i in range(0, max(1, len(ids) - SEQ), SEQ // 2):
+    chunk = ids[i:i + SEQ]
+    if len(chunk) == SEQ:
+        chunks.append(chunk)
+print(&quot;chunks:&quot;, len(chunks), &quot;vocab:&quot;, len(chars))
+
+# 4. 定义一个小 GPT：2 层、2 头、64 维（几秒就能跑一步）
+cfg = GPT2Config(
+    vocab_size=len(chars),
+    n_positions=SEQ,
+    n_ctx=SEQ,
+    n_embd=64,
+    n_layer=2,
+    n_head=2,
+)
+model = GPT2LMHeadModel(cfg)
+opt = torch.optim.AdamW(model.parameters(), lr=1e-3)
+
+# 5. 训练循环：前向 -&gt; loss -&gt; 反向 -&gt; 更新（工业预训练就是把它放大几万亿倍）
+for step in range(200):
+    xb = torch.tensor(chunks[step % len(chunks)]).unsqueeze(0)
+    loss = model(input_ids=xb, labels=xb).loss
+    opt.zero_grad()
+    loss.backward()
+    opt.step()
+    if step % 10 == 0 or step == 199:
+        print(&quot;step %4d  loss %.4f&quot; % (step, loss.item()))
+</code></pre>
+<h3 id="step-2">Step 2 运行并记录</h3>
+<pre><code class="language-bash">cd llm-demo
+python scripts/mini_pretrain.py
+</code></pre>
+<p>预期输出长这样（数值因随机种子而异，但趋势相同）：</p>
+<pre><code class="language-text">corpus chars: 12345
+chunks: 190  vocab: 87
+step    0  loss 4.4621
+step   10  loss 3.8120
+step   20  loss 3.3011
+...
+step  190  loss 1.2304
+step  199  loss 1.1587
+</code></pre>
+<h3 id="step-3">Step 3 观察三个现象（这就是本章要建立的直觉）</h3>
+<ol>
+<li><strong>loss 从 4 点多一路降到 1 点多</strong>——模型在“学会接龙”：初始时每个字符概率接近均匀，所以 loss≈log(词表大小)；下降说明预测越来越准。</li>
+<li><strong>下降先快后慢</strong>——容易学的规律（标点、常用词）先学会，难学的规律后学会，这就是预训练曲线的常见形状。</li>
+<li><strong>同一个语料反复看（这里 200 步相当于看了多遍）</strong>——loss 还能继续降，但这是“背数据”而非“学规律”；真实预训练语料巨大，通常不过 1 个 epoch，正是为了避免这种假收敛。</li>
+</ol>
+<blockquote>
+<p>实验说明：这个迷你模型只有约 30 万参数，训练的是 120 条问答拼接的小语料，<strong>不是工业预训练</strong>。但它完整复刻了工业预训练的核心循环——数据切块、前向、交叉熵 loss、反向、更新。把语料换成几万亿 token、把模型换成几千亿参数、把单卡换成集群，就是 GPT 级别的预训练。</p>
+</blockquote>
+<hr />
+<h2 id="08">08 高频踩坑：新手理解预训练最常见的五个误区</h2>
+<p><strong>误区 1：把预训练当成“多跑几个 epoch 的微调”</strong>
+症状：小语料反复过几十遍，loss 很低，以为模型变强了。
+真相：预训练语料大、通常不到 1 epoch；重复数据只会带来记忆与过拟合。判断标准不是 train loss，而是 val loss 与下游评测。
+解法：区分“微调（小数据多 epoch）”和“预训练（大数据少 epoch）”两套思维，别混用。</p>
+<p><strong>误区 2：只看 train loss，不看 val loss 和 grad norm</strong>
+症状：训练日志只盯 loss，loss 降了就以为一切正常。
+真相：过拟合、梯度爆炸、数据泄漏都不会第一时间反映在 train loss 上。
+解法：把“loss + val loss + grad norm + 吞吐”四件套做成固定监控（第 13 章给完整模板）。</p>
+<p><strong>误区 3：数据配比“拍脑袋”，不做对照实验</strong>
+症状：通用语料和代码按 9:1 混，理由是“别人都这么配”。
+真相：配比必须服务于目标能力，且随数据质量变化。
+解法：先用小模型做配比消融（固定算力预算，对比 2–3 组配比的评测分），再放大。</p>
+<p><strong>误区 4：精度设置不当，loss 突然跳高</strong>
+症状：训练几千步后 loss spike，或一开始就不收敛。
+真相：可能是 FP16 溢出、BF16 与硬件不匹配、梯度裁剪缺失。
+解法：主流直接 BF16；换精度后先小规模跑通再放大，任何精度改动都要重测稳定步数（第 12/13 章展开）。</p>
+<p><strong>误区 5：loss 低 = 模型强</strong>
+症状：拿 train loss 到处说“我们模型收敛得很好”。
+真相：预训练的 loss 与下游能力不是线性关系，代码/数学等能力要靠专门评测集验证。
+解法：预训练期间就要周期跑“轻量评测集”（HellaSwag/MMLU 等公共基准或自建领域集），把 loss 与能力两条曲线一起看（第 20 章评估体系）。</p>
+<h2 id="09">09 进阶优化：从“看懂原理”到“能做预训练工程”</h2>
+<p><strong>① 用“小模型试点”代替拍脑袋</strong>：任何配比、超参、数据策略，先在一两个 1B 级模型上做短周期实验（固定 token 预算），用评测分排序，再放大到目标规模。这是预训练团队最核心的工作方法。</p>
+<p><strong>② 建立“预期 loss”曲线</strong>：用公开 scaling law 经验或自家小规模数据拟合“数据量→loss”的预期曲线，训练实际 loss 明显偏离预期时，优先怀疑数据问题而非模型问题——这是高级团队排查训练异常的常用手段（第 13 章展开）。</p>
+<p><strong>③ 盯 MFU 与数据加载</strong>：MFU 低时先查数据加载、通信与 kernel 是否瓶颈，再决定加机器；加机器不解决数据瓶颈，只会更亏钱。</p>
+<p><strong>④ 不要轻易启动全量预训练</strong>：对绝大多数团队，正确答案是“开源底座 + 领域数据增量预训练（第 11 章）+ SFT/对齐”。全量预训练适合数据、算力、评测、工程四件事都齐的团队。</p>
+<hr />
+<h2 id="10-top3">10 本章核心总结（TOP3）</h2>
+<p><strong>TOP1</strong>：预训练的本质是“无监督文字接龙”——文本自己提供标签，模型通过预测下一个 token 把语言规律压缩进参数；分词、embedding、Transformer、交叉熵四步构成了训练的最小循环。</p>
+<p><strong>TOP2</strong>：数据决定模型上限：配比决定能力结构，脏/重/偏的数据会直接稀释能力；工业预训练语料巨大通常不到 1 个 epoch，而微调才是小数据多 epoch 的玩法，两套思维不能混。</p>
+<p><strong>TOP3</strong>：预训练工程师的仪表盘是“loss + val loss + grad norm + 吞吐（MFU）”四件套，只看 train loss 等于盲飞；所有判断最终要靠评测集，而不是 loss 数字本身。</p>
+<hr />
+<h2 id="11">11 连载衔接</h2>
+<p>上一章（第 02 章）你跑通了微调最小闭环；本章看清了底座模型“接龙”的底层逻辑——你微调的底座，就是被这么喂大的。</p>
+<p>下一章进入数据核心层的第一块硬骨头：【第 04 章】数据管道从零构建：原始采集、多源整合与目录设计。我们会回答：那些“喂给接龙游戏”的语料，到底是怎么从互联网原始数据变成规整训练集的。</p>
+<hr />
+<h2 id="12">12 话题标签与系列目录索引</h2>
+<p>话题标签：<strong>#LLM全栈工程 #预训练 #大模型原理 #训练日志 #数据质量 #工程实战</strong>（Voice前沿 出品，欢迎收藏追更）</p>
+<p><strong>系列目录（46 章，随连载持续更新）</strong></p>
+<p>第 0 阶段·开篇引路
+- 01 一条大模型生产线全程发生了什么
+- 02 2 小时跑通最小闭环
+- 03 预训练到底在练什么（本篇）</p>
+<p>第 1 阶段·预训练工程·数据核心层
+- 04 数据管道从零构建
+- 05 数据清洗规范与脏数据剔除
+- 06 文本过滤实战
+- 07 数据去重算法
+- 08 敏感数据脱敏
+- 09 数据质量打分体系
+- 10 领域专属数据构建
+- 11 增量预训练方案
+- 12 预训练超参选型与硬件适配
+- 13 断点续训、收敛判断与失败排查</p>
+<p>第 2 阶段·微调与对齐体系
+- 14 全维度微调技术拆解
+- 15 SFT 监督微调实战
+- 16 SFT 数据集构建与标注规范
+- 17 微调模板设计
+- 18 微调超参调优策略
+- 19 过拟合、欠拟合与灾难遗忘
+- 20 微调效果评估体系
+- 21 多轮对话微调专项
+- 22 模型蒸馏实战
+- 23 奖励模型训练
+- 24 RLHF/PPO 工程落地
+- 25 RLAIF：AI 反馈自动对齐
+- 26 小样本与领域自适应微调</p>
+<p>第 3 阶段·基础部署与推理优化
+- 27 部署框架横向对比
+- 28 vLLM 部署实战与参数调优
+- 29 SGLang 高性能推理落地
+- 30 TensorRT-LLM 固化与加速
+- 31 模型量化实操
+- 32 模型剪枝与蒸馏压缩
+- 33 KV Cache 优化与上下文窗口拓展
+- 34 流式推理封装与高并发服务化</p>
+<p>第 4 阶段·高阶推理编译器极致优化
+- 35 推理编译器核心原理
+- 36 算子融合与计算图编译
+- 37 动态 shape 与显存编译器优化
+- 38 Speculative Decoding 投机推理进阶
+- 39 批量调度与并行深度适配
+- 40 内核重构与编译级量化</p>
+<p>第 5 阶段·全栈工程联调与项目落地
+- 41 全链路串联：数据到上线一体化流程
+- 42 领域大模型定制化落地
+- 43 高并发生产适配与端侧部署
+- 44 模型迭代升级与性能对标评测
+- 45 线上问题闭环排查
+- 46 工程化最佳实践汇总（手册终章）</p>
+<hr />
+<p><em>本文由 Voice前沿 出品 · 转载注明出处 · 下一篇：第 04 章 数据管道从零构建</em></p>
+</article>
+<nav class="prevnext"><a href="ch02.html">← 第 02 章 【LLM全栈工程·第02章】2 小时跑通最小闭环：从开源模型下载到 LoRA 微调再到推理服务</a><a href="ch04.html" style="text-align:right">第 04 章 【LLM全栈工程·第04章】数据管道从零构建：原始采集、多源整合与目录设计 →</a></nav>
+</main>
+<footer class="wrap"><p>LLM 全栈工程 · Voice前沿 出品 · 46 章连载 · 收藏即手册</p></footer>
+</body>
+</html>

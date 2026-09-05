@@ -1,0 +1,639 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>【LLM全栈工程·第12章】预训练超参选型与硬件适配：把每一分算力花在刀刃上 · LLM 全栈工程</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header"><div class="wrap">
+<a class="brand" href="../index.html">LLM 全栈工程<small>LLM 工业级全栈工程落地手册 · 46 章</small></a>
+<nav><a href="../index.html">目录</a><a href="https://github.com/">GitHub 仓库</a></nav>
+</div></header>
+<main class="wrap">
+<nav class="crumbs"><a href="../index.html">全部章节</a> / 【LLM全栈工程·第12章】预训练超参选型与硬件适配：把每一分算力花在刀刃上</nav>
+<details class="toc-box"><summary>本章目录</summary><div class="toc">
+<ul>
+<li><a href="#_1">单篇内容卡（排版本忽略）</a></li>
+<li><a href="#01">01 开篇导语</a></li>
+<li><a href="#02">02 白话原理：训练系统 = 油门 × 车道 × 路况</a></li>
+<li><a href="#03">03 超参选型：七个关键旋钮</a><ul>
+<li><a href="#31">3.1 七个旋钮一览</a></li>
+<li><a href="#32">3.2 学习率参考区间（按规模）</a></li>
+<li><a href="#33-batch-lr">3.3 Batch 与 LR 的联动</a></li>
+<li><a href="#34">3.4 精度选择的坑位提醒</a></li>
+</ul>
+</li>
+<li><a href="#04">04 硬件适配：先算账，再花钱</a><ul>
+<li><a href="#41">4.1 显存估算：一张公式表</a></li>
+<li><a href="#42">4.2 硬件档位与并行策略</a></li>
+<li><a href="#43">4.3 并行策略选择表</a></li>
+<li><a href="#44-mfu">4.4 MFU：算力有没有被浪费</a></li>
+</ul>
+</li>
+<li><a href="#05-10">05 分步实操：10 分钟做出训练方案</a><ul>
+<li><a href="#step-1-2">Step 1 填“实验卡”（2 分钟）</a></li>
+<li><a href="#step-2-5">Step 2 跑显存估算脚本（5 分钟）</a></li>
+<li><a href="#step-3-3">Step 3 试算三种场景（3 分钟）</a></li>
+<li><a href="#step-4-200-10">Step 4 定方案并跑 200 步烟雾测试（10 分钟+）</a></li>
+<li><a href="#step-5-5">Step 5 归档并打版本（5 分钟）</a></li>
+</ul>
+</li>
+<li><a href="#06-cpt">06 参数详解：预训练/CPT 关键超参速查</a></li>
+<li><a href="#07">07 高频踩坑排查</a></li>
+<li><a href="#08">08 进阶优化：超参与硬件的进化玩法</a></li>
+<li><a href="#09-top3">09 本章核心总结（TOP3）</a></li>
+<li><a href="#10">10 连载衔接</a></li>
+<li><a href="#11">11 话题标签与系列目录索引</a></li>
+</ul>
+</div>
+</details>
+<article class="article">
+<h1 id="llm12">【LLM全栈工程·第12章】预训练超参选型与硬件适配：把每一分算力花在刀刃上</h1>
+<blockquote>
+<p>本篇为「LLM全栈工程」连载第 12 章（Voice前沿）。主标题以上为准；备选标题（供运营选用，不进正文）：① 训练不收敛先别怪代码：学习率、Batch 与精度选型；② 7B 全参训练要多少显存？一张表算清硬件账；③ 从单卡到多卡：DP/ZeRO/TP/PP 到底怎么选。</p>
+</blockquote>
+<hr />
+<h2 id="_1">单篇内容卡（排版本忽略）</h2>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>章节定位</td>
+<td>「预训练工程·数据核心层」第 10 篇：把训练超参与硬件规模对应起来，支撑 CPT/预训练方案落地</td>
+</tr>
+<tr>
+<td>适用场景</td>
+<td>个人学习（单卡 LoRA/小模型）；小团队选型 GPU；企业预训练/CPT 硬件规划与预算</td>
+</tr>
+<tr>
+<td>核心知识点</td>
+<td>关键超参（batch/LR/精度/优化器）；显存估算公式；并行策略矩阵；MFU 与硬件匹配</td>
+</tr>
+<tr>
+<td>技术选型</td>
+<td>全参 vs ZeRO/FSDP vs TP/PP/CP；单卡/单机多卡/多节点硬件档位</td>
+</tr>
+<tr>
+<td>分步实操</td>
+<td>填实验卡 → 显存估算脚本 → 并行与超参决策 → 200 步烟雾测试 → 记录归档</td>
+</tr>
+<tr>
+<td>参数详解</td>
+<td>峰值 LR、warmup、batch tokens、beta2、weight decay、grad clip、精度、序列长度</td>
+</tr>
+<tr>
+<td>踩坑排查</td>
+<td>LR 过高 spike、显存算漏激活、TP 无 NVLink、FP16 溢出、只加卡不查数据、不跑烟雾测试</td>
+</tr>
+<tr>
+<td>进阶优化</td>
+<td>小规模超参迁移、激活重算、序列打包、上下文并行、自动并行与调度</td>
+</tr>
+<tr>
+<td>本章 TOP3</td>
+<td>见文末</td>
+</tr>
+<tr>
+<td>下章预告</td>
+<td>第 13 章：断点续训、收敛判断与训练失败排查</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="01">01 开篇导语</h2>
+<p>上一章你跑通了 LoRA CPT，但心里一定有个疑问：<strong>如果我要做真正的全参预训练/CPT，需要多大的机器？学习率设多少？8 张卡怎么分工？</strong></p>
+<p>这些问题没有“标准答案”，但有<strong>标准方法</strong>。预训练超参选型的本质是：在“显存、算力、网络”三条硬约束下，找到一组让 loss 稳定下降的参数；硬件适配的本质则是：<strong>先算清账，再花钱，不买用不上的卡，也不让卡闲着。</strong></p>
+<p>本章给你三样东西：</p>
+<ol>
+<li>一套超参选择的“坐标系”（batch、LR、精度、优化器）；</li>
+<li>一张硬件与并行策略的决策地图（从单卡到多节点）；</li>
+<li>一个 10 分钟能跑的显存估算与实验规划脚本。</li>
+</ol>
+<blockquote>
+<p>一句话记住本章：<strong>超参是“油门”，硬件是“车道”，数据管道是“路况”——三者匹配才能又快又稳；先小规模试跑，再放大投产。</strong></p>
+</blockquote>
+<hr />
+<h2 id="02">02 白话原理：训练系统 = 油门 × 车道 × 路况</h2>
+<p>一次预训练/CPT 的每个 step，可以用三个视角拆开看：</p>
+<p><strong>① 数据视角（每步看多少）</strong>
+全局 batch（token 数）= 单卡 micro-batch × 梯度累积 × 卡数 × 序列长度。它决定梯度估计的稳定性和算力利用率。</p>
+<p><strong>② 优化视角（每步改多少）</strong>
+学习率决定参数更新幅度；warmup 让起步平稳；cosine 衰减让后期收敛；weight decay 控制参数不过度膨胀；grad clip 防梯度爆炸。它们共同决定 loss 曲线形态。</p>
+<p><strong>③ 硬件视角（装得下、跑得动）</strong>
+显存决定模型/优化器/激活能不能放下；算力决定单位时间能处理多少 token；卡间网络决定并行方案的上限。<strong>先算显存，再谈并行</strong>——这是硬件规划的第一性原理。</p>
+<blockquote>
+<p>超参与硬件的匹配铁律：<strong>先在小规模（少卡/短序列/少步数）把“参数组合”跑稳，再按比例放大到目标规模</strong>。直接在大集群上调参，一次失误可能烧掉几十万。</p>
+</blockquote>
+<h2 id="03">03 超参选型：七个关键旋钮</h2>
+<h3 id="31">3.1 七个旋钮一览</h3>
+<table>
+<thead>
+<tr>
+<th>旋钮</th>
+<th>作用</th>
+<th>选型逻辑</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>全局 batch（tokens）</td>
+<td>每步梯度估计质量</td>
+<td>太小震荡，太大效率低；与 LR 联动</td>
+</tr>
+<tr>
+<td>峰值学习率</td>
+<td>更新幅度</td>
+<td>随模型变大而下降；先小规模扫参</td>
+</tr>
+<tr>
+<td>warmup</td>
+<td>起步稳定</td>
+<td>通常 0.5%–2% 总步数（或数百步）</td>
+</tr>
+<tr>
+<td>衰减策略</td>
+<td>后期收敛</td>
+<td>cosine 常用；预训练末期可接数据退火</td>
+</tr>
+<tr>
+<td>优化器</td>
+<td>参数更新算法</td>
+<td>预训练常用 AdamW；beta2 常用 0.95–0.999</td>
+</tr>
+<tr>
+<td>weight decay</td>
+<td>防参数膨胀</td>
+<td>预训练常见 0.1 量级（AdamW）</td>
+</tr>
+<tr>
+<td>精度</td>
+<td>显存/数值</td>
+<td>BF16 主流；FP16 需 loss scaling；FP8 前沿</td>
+</tr>
+</tbody>
+</table>
+<h3 id="32">3.2 学习率参考区间（按规模）</h3>
+<table>
+<thead>
+<tr>
+<th>模型规模</th>
+<th>峰值 LR（参考）</th>
+<th>全局 batch（tokens，参考）</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>&lt;1B</td>
+<td>6e-4 ~ 1e-3</td>
+<td>0.25M – 1M</td>
+</tr>
+<tr>
+<td>1B–10B</td>
+<td>2e-4 ~ 4e-4</td>
+<td>0.5M – 4M</td>
+</tr>
+<tr>
+<td>10B–70B</td>
+<td>1e-4 ~ 2e-4</td>
+<td>2M – 16M</td>
+</tr>
+<tr>
+<td>70B+</td>
+<td>5e-5 ~ 1e-4</td>
+<td>4M – 60M</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>这些是“经验参考坐标系”，不是真理：你的数据质量、模型结构、优化器细节都会移动最优值。<strong>正确姿势是用小规模扫参 + 迁移</strong>（见本章进阶优化），而不是照抄某家大厂的数。</p>
+</blockquote>
+<h3 id="33-batch-lr">3.3 Batch 与 LR 的联动</h3>
+<p>经验规律：batch 翻倍时，LR 可以按平方根或线性比例上调（不同学派有不同建议）。工程上更稳的做法是：<strong>固定 batch，先扫 LR（如 5 个档位各跑 500 步看 loss 曲线），再固定 LR 调 batch</strong>——一次只动一个变量，才能归因。</p>
+<h3 id="34">3.4 精度选择的坑位提醒</h3>
+<ul>
+<li>BF16：动态范围与 FP32 接近，训练稳定，Ampere 及以上 GPU 的主流选择；</li>
+<li>FP16：需要动态 loss scaling，处理不当会出现 loss spike/NaN；</li>
+<li>FP8：省显存提吞吐，但对数值敏感，通常大厂成熟 pipeline 才用；</li>
+<li>混合精度下优化器状态仍建议保留 FP32 主权重，否则小学习率下可能不收敛。</li>
+</ul>
+<blockquote>
+<p>判断精度是否正常的快捷方式：前 1000 步 grad norm 应保持健康量级（不趋 0、不爆炸）；出现诡异 spike 时先怀疑精度与 grad clip，再怀疑数据。</p>
+</blockquote>
+<h2 id="04">04 硬件适配：先算账，再花钱</h2>
+<h3 id="41">4.1 显存估算：一张公式表</h3>
+<table>
+<thead>
+<tr>
+<th>项目</th>
+<th>估算</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>模型权重（BF16）</td>
+<td>参数量 × 2 字节</td>
+<td>7B ≈ 14GB</td>
+</tr>
+<tr>
+<td>梯度（BF16）</td>
+<td>参数量 × 2 字节</td>
+<td>与权重同量级</td>
+</tr>
+<tr>
+<td>AdamW 优化器状态</td>
+<td>参数量 × 12 字节左右</td>
+<td>FP32 主权重 + 一阶/二阶矩</td>
+</tr>
+<tr>
+<td>小计（全参 BF16+AdamW）</td>
+<td>参数量 × 16 字节</td>
+<td>7B ≈ 112GB，单卡必爆</td>
+</tr>
+<tr>
+<td>激活值</td>
+<td>与 batch×序列×层数相关</td>
+<td>用激活重算（activation checkpointing）可大幅下降</td>
+</tr>
+<tr>
+<td>LoRA/QLoRA</td>
+<td>只训 adapter，底座可冻结/量化</td>
+<td>7B QLoRA 单卡 24GB 可跑</td>
+</tr>
+</tbody>
+</table>
+<p><strong>核心结论</strong>：7B 全参 BF16+AdamW 约需 112GB 以上（未含激活），单张 80GB 卡也放不下——必须 ZeRO/FSDP 分片或 CPU offload；而 LoRA/QLoRA 把“要训练的状态”降到 1% 以内，单卡就能跑。<strong>先明确“全参还是 LoRA”，显存账完全不同。</strong></p>
+<h3 id="42">4.2 硬件档位与并行策略</h3>
+<table>
+<thead>
+<tr>
+<th>档位</th>
+<th>典型配置</th>
+<th>能干的事</th>
+<th>并行建议</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>入门单卡</td>
+<td>1×24GB</td>
+<td>7B QLoRA/LoRA CPT、SFT、推理</td>
+<td>不需要并行</td>
+</tr>
+<tr>
+<td>单机多卡</td>
+<td>4–8×80GB（NVLink）</td>
+<td>7B–13B 全参 CPT；34B 需 ZeRO+offload 谨慎评估</td>
+<td>ZeRO/FSDP 起步，必要时 TP</td>
+</tr>
+<tr>
+<td>多节点</td>
+<td>16–128×80GB+（IB 网络）</td>
+<td>34B–70B+ 预训练</td>
+<td>ZeRO + TP/PP 组合</td>
+</tr>
+<tr>
+<td>大集群</td>
+<td>数百卡 H100 级</td>
+<td>百亿以上旗舰预训练</td>
+<td>TP+PP+CP+DP 全上</td>
+</tr>
+</tbody>
+</table>
+<h3 id="43">4.3 并行策略选择表</h3>
+<table>
+<thead>
+<tr>
+<th>策略</th>
+<th>拆什么</th>
+<th>需要什么</th>
+<th>什么时候用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>DP（数据并行）</td>
+<td>每卡一份模型，切数据</td>
+<td>普通网络即可</td>
+<td>模型单卡放得下</td>
+</tr>
+<tr>
+<td>ZeRO/FSDP</td>
+<td>分片优化器/梯度/参数</td>
+<td>节点内高速互联更佳</td>
+<td>模型单卡放不下但可全参训练</td>
+</tr>
+<tr>
+<td>TP（张量并行）</td>
+<td>把每层拆到多卡</td>
+<td>NVLink/高速互联</td>
+<td>单卡放不下单层，卡间带宽高</td>
+</tr>
+<tr>
+<td>PP（流水线并行）</td>
+<td>不同层放不同卡</td>
+<td>带宽要求低于 TP</td>
+<td>多节点、层数多</td>
+</tr>
+<tr>
+<td>CP（上下文并行）</td>
+<td>沿序列长度切分</td>
+<td>高速互联</td>
+<td>超长序列（128K+）</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>网络是隐形瓶颈：TP 需要 NVLink 级互联，跨节点硬上 TP 会慢到怀疑人生；单机 8 卡优先 ZeRO/FSDP，多节点再上 PP+TP 组合。</p>
+</blockquote>
+<h3 id="44-mfu">4.4 MFU：算力有没有被浪费</h3>
+<p>MFU（Model FLOPs Utilization）衡量“显卡理论算力被用上多少”。成熟集群 40%–60% 已属优秀量级（随硬件/模型浮动），如果长期只有个位数，先查：数据加载、卡间通信、kernel 效率、batch 太小——<strong>加卡之前先查 MFU</strong>，否则加再多卡也是空转。</p>
+<h2 id="05-10">05 分步实操：10 分钟做出训练方案</h2>
+<h3 id="step-1-2">Step 1 填“实验卡”（2 分钟）</h3>
+<p>训练前先回答六个问题（写进 configs/experiment_card.md）：</p>
+<table>
+<thead>
+<tr>
+<th>问题</th>
+<th>示例答案</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>模型规模</td>
+<td>7B</td>
+</tr>
+<tr>
+<td>训练方式</td>
+<td>LoRA CPT（单卡） / 全参 CPT（8 卡）</td>
+</tr>
+<tr>
+<td>数据预算</td>
+<td>50 亿 token（CPT 小规模可 1–5 亿）</td>
+</tr>
+<tr>
+<td>硬件</td>
+<td>1×RTX 4090 24GB 或 8×A100 80GB</td>
+</tr>
+<tr>
+<td>目标评测</td>
+<td>领域评测 + 通用评测</td>
+</tr>
+<tr>
+<td>时间/成本上限</td>
+<td>3 天 / 预算 X</td>
+</tr>
+</tbody>
+</table>
+<h3 id="step-2-5">Step 2 跑显存估算脚本（5 分钟）</h3>
+<p>保存 scripts/plan_pretrain.py：</p>
+<pre><code class="language-python"># scripts/plan_pretrain.py —— 显存估算 + 并行建议
+# 用法：python plan_pretrain.py &lt;参数量B&gt; &lt;full|lora&gt; &lt;卡数&gt; &lt;单卡显存GB&gt;
+import json
+import pathlib
+import sys
+
+params_b = float(sys.argv[1]) if len(sys.argv) &gt; 1 else 7.0
+mode = sys.argv[2] if len(sys.argv) &gt; 2 else &quot;full&quot;
+n_gpu = int(sys.argv[3]) if len(sys.argv) &gt; 3 else 1
+vram_gb = int(sys.argv[4]) if len(sys.argv) &gt; 4 else 80
+
+GB = 1024 ** 3
+params = params_b * 1e9
+
+if mode == &quot;full&quot;:
+    weights = params * 2      # BF16 权重
+    grads = params * 2        # BF16 梯度
+    optimizer = params * 12   # AdamW：FP32 主权重+一阶+二阶
+    total = weights + grads + optimizer
+    note = &quot;全参 BF16 + AdamW（未含激活值；激活用 checkpointing 控制）&quot;
+else:
+    weights = params * 2      # 冻结底座 BF16
+    trainable = params * 0.01 # 假设 LoRA 可训练参数约 1%
+    total = weights + trainable * 16
+    note = &quot;LoRA：底座冻结（BF16），只训约 1% 参数&quot;
+
+per_gpu = total / n_gpu
+
+print(&quot;参数规模: %.1fB  模式: %s  卡数: %d  单卡: %dGB&quot; % (params_b, mode, n_gpu, vram_gb))
+print(&quot;估算总占用: %.1f GB  -&gt;  均摊每卡: %.1f GB&quot; % (total / GB, per_gpu / GB))
+print(&quot;说明:&quot;, note)
+print(&quot;激活值未计入，实际需额外预留 10%-40%（可用激活重算压缩）。&quot;)
+
+plan = {&quot;model_b&quot;: params_b, &quot;mode&quot;: mode, &quot;n_gpu&quot;: n_gpu, &quot;per_gpu_est_gb&quot;: round(per_gpu / GB, 1), &quot;note&quot;: note}
+if per_gpu &lt; vram_gb * 0.85:
+    plan[&quot;verdict&quot;] = &quot;feasible&quot;
+    if mode == &quot;full&quot; and n_gpu &gt; 1:
+        plan[&quot;suggestion&quot;] = &quot;用 ZeRO-3/FSDP 分片；激活多时开 activation checkpointing&quot;
+    elif mode == &quot;lora&quot;:
+        plan[&quot;suggestion&quot;] = &quot;单卡 LoRA/QLoRA 可跑，QLoRA 显存更省&quot;
+elif mode == &quot;full&quot;:
+    plan[&quot;verdict&quot;] = &quot;infeasible_now&quot;
+    plan[&quot;suggestion&quot;] = &quot;增加卡数 / 开 ZeRO+offload / 改 LoRA(QLoRA) / 换小模型&quot;
+else:
+    plan[&quot;verdict&quot;] = &quot;tight&quot;
+    plan[&quot;suggestion&quot;] = &quot;开 QLoRA 4bit 或降序列长度&quot;
+
+out_dir = pathlib.Path(__file__).resolve().parent.parent / &quot;configs&quot;
+out_dir.mkdir(parents=True, exist_ok=True)
+with open(out_dir / &quot;train_plan.json&quot;, &quot;w&quot;, encoding=&quot;utf-8&quot;) as f:
+    json.dump(plan, f, ensure_ascii=False, indent=2)
+print(&quot;plan -&gt; configs/train_plan.json&quot;)
+</code></pre>
+<h3 id="step-3-3">Step 3 试算三种场景（3 分钟）</h3>
+<pre><code class="language-bash">python scripts/plan_pretrain.py 7 lora 1 24     # 单卡 24GB LoRA CPT
+python scripts/plan_pretrain.py 7 full 8 80     # 8 卡全参（ZeRO-3）
+python scripts/plan_pretrain.py 70 full 64 80   # 70B 多节点（TP+PP+ZeRO）
+</code></pre>
+<p>对照输出理解：7B 全参均摊每卡约 14GB（未含激活），8×80GB 集群可行；70B 全参均摊 17.5GB/卡但<strong>激活与通信开销大</strong>，实际需要 TP/PP+ZeRO 组合与更多预留。</p>
+<h3 id="step-4-200-10">Step 4 定方案并跑 200 步烟雾测试（10 分钟+）</h3>
+<p>把决策写进 configs/train_plan.json 对应的训练配置（batch/LR/精度/并行），然后在目标集群上：</p>
+<ol>
+<li>只取 1% 数据、200–500 步；</li>
+<li>盯四个数：train loss 是否下降、grad norm 是否健康、tokens/s 是否达标、MFU 是否 &gt;15%；</li>
+<li>任何一项异常都先回 Step 3 调整，不要直接开全量。</li>
+</ol>
+<h3 id="step-5-5">Step 5 归档并打版本（5 分钟）</h3>
+<pre><code class="language-bash">cd llm-demo
+git add configs scripts
+git commit -m &quot;plan: 7B LoRA CPT single-24GB, lr sweep candidates, smoke-test gate&quot;
+git tag train-plan-v0.1
+</code></pre>
+<blockquote>
+<p>烟雾测试通过 ≠ 可以全量：全量前还要做 checkpoint 策略、日志监控与失败预案——那是第 13 章的内容。</p>
+</blockquote>
+<h2 id="06-cpt">06 参数详解：预训练/CPT 关键超参速查</h2>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>参考区间</th>
+<th>适配场景</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>峰值 LR</td>
+<td>按规模表（5e-5~1e-3）</td>
+<td>模型越大越低；LoRA CPT 可用 5e-5~2e-4</td>
+</tr>
+<tr>
+<td>warmup 步数</td>
+<td>总步数 0.5%–2%</td>
+<td>大数据长训取低值，小数据取高值</td>
+</tr>
+<tr>
+<td>全局 batch</td>
+<td>0.25M–60M tokens</td>
+<td>小模型/CPT 取低，大模型取高</td>
+</tr>
+<tr>
+<td>micro-batch</td>
+<td>1–16（按显存）</td>
+<td>先定 micro-batch，再用梯度累积凑全局 batch</td>
+</tr>
+<tr>
+<td>beta2</td>
+<td>0.95–0.999</td>
+<td>预训练常用 0.95；微调可用 0.999</td>
+</tr>
+<tr>
+<td>weight decay</td>
+<td>0.01–0.1</td>
+<td>预训练常 0.1（AdamW）</td>
+</tr>
+<tr>
+<td>grad clip</td>
+<td>0.5–1.0</td>
+<td>防梯度爆炸；loss spike 时先查它</td>
+</tr>
+<tr>
+<td>精度</td>
+<td>BF16 主流</td>
+<td>FP16 需 loss scaling；FP8 需成熟 pipeline</td>
+</tr>
+<tr>
+<td>序列长度</td>
+<td>2048–8192+</td>
+<td>与位置编码上限匹配，长文档任务再加</td>
+</tr>
+<tr>
+<td>activation checkpointing</td>
+<td>开/关</td>
+<td>显存紧就开，代价是约 20%–30% 重算开销</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>给初学者的“第一个参数组”：7B LoRA CPT = LR 1e-4 + batch 1M tokens + BF16 + grad clip 1.0 + cosine + warmup 1%，跑 500 步看曲线再调。<strong>永远先跑小步数再放大。</strong></p>
+</blockquote>
+<hr />
+<h2 id="07">07 高频踩坑排查</h2>
+<p><strong>坑 1：LR 照搬大厂论文</strong>
+症状：把 175B 模型的 6e-5 直接用到 1B 模型，loss 半天不动。
+解法：按规模表取初值，小规模扫 3–5 个 LR，看 500 步 loss 曲线再定。</p>
+<p><strong>坑 2：显存只算权重，不算优化器与激活</strong>
+症状：7B 全参 BF16 以为 14GB 就能跑，结果 OOM。
+解法：用本章公式：全参 AdamW ≈ 16 字节/参数 + 激活预留；或用 plan_pretrain.py 先估算。</p>
+<p><strong>坑 3：TP 用在跨节点普通网络上</strong>
+症状：张量并行把每层拆到两台机器，通信慢到吞吐暴跌。
+解法：TP 只用于 NVLink 级高速互联；跨节点用 PP/DP/ZeRO。</p>
+<p><strong>坑 4：FP16 不开 loss scaling</strong>
+症状：训练几千步后 loss 突然 NaN/Inf。
+解法：BF16 优先；若用 FP16 必须配动态 loss scaling 与 grad clip。</p>
+<p><strong>坑 5：batch 太小导致 loss 震荡</strong>
+症状：loss 曲线锯齿严重，怎么调 LR 都没用。
+解法：先凑到参考 token 量级（见 3.2 表），再调 LR；小 batch 请降低 LR。</p>
+<p><strong>坑 6：只看 loss 不看 grad norm</strong>
+症状：训练“看起来在降”，其实梯度早已爆炸又恢复。
+解法：grad norm 进监控；超过历史 10 倍即告警（第 13 章给排查流程）。</p>
+<p><strong>坑 7：烟雾测试没跑就全量开跑</strong>
+症状：配置错误到第 10000 步才发现，浪费整周算力。
+解法：任何新配置先 200–500 步烟雾测试，四个指标（loss/grad norm/吞吐/MFU）达标才全量。</p>
+<hr />
+<h2 id="08">08 进阶优化：超参与硬件的进化玩法</h2>
+<p><strong>① 小规模超参迁移</strong>：在 1B 级模型上做 LR/batch 扫参，用“按规模缩放规则”迁移到 7B/70B（LR 随规模降、batch 随规模升）；虽然不完美，但比大集群盲调便宜两个数量级。</p>
+<p><strong>② 激活重算 + 序列打包</strong>：显存不够先开 activation checkpointing；数据侧用序列打包（第 03 章）把短文档拼成长序列，减少 padding 浪费，等效提升吞吐。</p>
+<p><strong>③ 上下文并行（CP）</strong>：序列长度到 128K+ 时，单卡装不下整条序列的激活，用 CP 沿序列切分；它需要高速互联，通常与 TP 配合。</p>
+<p><strong>④ 自动并行/调度器</strong>：Megatron 类框架支持自动切分策略搜索；云上训练平台帮你做节点调度与故障迁移。小团队别自研调度器，用成熟框架+平台。</p>
+<p><strong>⑤ MFU 专项优化</strong>：数据加载用独立进程预取、开启 kernel 融合与通信计算重叠（overlap）；每提一档 MFU，等于免费多买一批卡。</p>
+<hr />
+<h2 id="09-top3">09 本章核心总结（TOP3）</h2>
+<p><strong>TOP1</strong>：预训练超参是“batch–LR–精度–优化器”联动系统：先定全局 batch（tokens），再扫 LR，BF16 起步，grad clip 1.0，最后用小步数烟雾测试验证。</p>
+<p><strong>TOP2</strong>：硬件先算账：全参 BF16+AdamW ≈ 16 字节/参数（7B≈112GB+激活），必须 ZeRO/FSDP/offload；LoRA/QLoRA 把训练状态降到 1% 以内，单卡可跑。TP 要 NVLink，跨节点用 PP/DP。</p>
+<p><strong>TOP3</strong>：任何配置先跑 200–500 步烟雾测试，盯 loss/grad norm/吞吐/MFU 四指标；小规模扫参迁移到大模型，比大集群直接盲调省钱一个量级。</p>
+<hr />
+<h2 id="10">10 连载衔接</h2>
+<p>上一章（第 11 章）完成了领域 CPT 的首次实验；本章把超参与硬件的地图补齐——你会算显存、会选并行、会做烟雾测试，训练方案从“试出来的”变成“算出来的”。</p>
+<p>下一章处理训练中最让人头大的环节：【第 13 章】断点续训、收敛判断与训练失败排查。checkpoint 怎么设计、loss spike 怎么定位、训练挂了怎么优雅恢复——把“训练翻车”从事故变成流程。</p>
+<hr />
+<h2 id="11">11 话题标签与系列目录索引</h2>
+<p>话题标签：<strong>#LLM全栈工程 #预训练超参 #GPU #分布式训练 #MFU #工程实战</strong>（Voice前沿 出品，欢迎收藏追更）</p>
+<p><strong>系列目录（46 章，随连载持续更新）</strong></p>
+<p>第 0 阶段·开篇引路
+- 01 一条大模型生产线全程发生了什么
+- 02 2 小时跑通最小闭环
+- 03 预训练到底在练什么</p>
+<p>第 1 阶段·预训练工程·数据核心层
+- 04 数据管道从零构建
+- 05 数据清洗规范与脏数据剔除
+- 06 文本过滤实战
+- 07 数据去重算法
+- 08 敏感数据脱敏
+- 09 数据质量打分体系
+- 10 领域专属数据构建
+- 11 增量预训练方案
+- 12 预训练超参选型与硬件适配（本篇）
+- 13 断点续训、收敛判断与失败排查</p>
+<p>第 2 阶段·微调与对齐体系
+- 14 全维度微调技术拆解
+- 15 SFT 监督微调实战
+- 16 SFT 数据集构建与标注规范
+- 17 微调模板设计
+- 18 微调超参调优策略
+- 19 过拟合、欠拟合与灾难遗忘
+- 20 微调效果评估体系
+- 21 多轮对话微调专项
+- 22 模型蒸馏实战
+- 23 奖励模型训练
+- 24 RLHF/PPO 工程落地
+- 25 RLAIF：AI 反馈自动对齐
+- 26 小样本与领域自适应微调</p>
+<p>第 3 阶段·基础部署与推理优化
+- 27 部署框架横向对比
+- 28 vLLM 部署实战与参数调优
+- 29 SGLang 高性能推理落地
+- 30 TensorRT-LLM 固化与加速
+- 31 模型量化实操
+- 32 模型剪枝与蒸馏压缩
+- 33 KV Cache 优化与上下文窗口拓展
+- 34 流式推理封装与高并发服务化</p>
+<p>第 4 阶段·高阶推理编译器极致优化
+- 35 推理编译器核心原理
+- 36 算子融合与计算图编译
+- 37 动态 shape 与显存编译器优化
+- 38 Speculative Decoding 投机推理进阶
+- 39 批量调度与并行深度适配
+- 40 内核重构与编译级量化</p>
+<p>第 5 阶段·全栈工程联调与项目落地
+- 41 全链路串联：数据到上线一体化流程
+- 42 领域大模型定制化落地
+- 43 高并发生产适配与端侧部署
+- 44 模型迭代升级与性能对标评测
+- 45 线上问题闭环排查
+- 46 工程化最佳实践汇总（手册终章）</p>
+<hr />
+<p><em>本文由 Voice前沿 出品 · 转载注明出处 · 下一篇：第 13 章 断点续训、收敛判断与训练失败排查</em></p>
+</article>
+<nav class="prevnext"><a href="ch11.html">← 第 11 章 【LLM全栈工程·第11章】增量预训练方案：领域适配、学习率与灾难遗忘</a><a href="ch13.html" style="text-align:right">第 13 章 【LLM全栈工程·第13章】断点续训、收敛判断与训练失败排查：把“训练翻车”变成流程 →</a></nav>
+</main>
+<footer class="wrap"><p>LLM 全栈工程 · Voice前沿 出品 · 46 章连载 · 收藏即手册</p></footer>
+</body>
+</html>

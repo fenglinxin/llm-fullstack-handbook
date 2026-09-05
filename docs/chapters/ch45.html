@@ -1,0 +1,525 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>【LLM全栈工程·第45章】线上问题闭环排查：监控、告警与应急手册 · LLM 全栈工程</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header"><div class="wrap">
+<a class="brand" href="../index.html">LLM 全栈工程<small>LLM 工业级全栈工程落地手册 · 46 章</small></a>
+<nav><a href="../index.html">目录</a><a href="https://github.com/">GitHub 仓库</a></nav>
+</div></header>
+<main class="wrap">
+<nav class="crumbs"><a href="../index.html">全部章节</a> / 【LLM全栈工程·第45章】线上问题闭环排查：监控、告警与应急手册</nav>
+<details class="toc-box"><summary>本章目录</summary><div class="toc">
+<ul>
+<li><a href="#_1">单篇内容卡（排版本忽略）</a></li>
+<li><a href="#01">01 开篇导语</a></li>
+<li><a href="#02-llm">02 白话原理：LLM 可观测三支柱</a></li>
+<li><a href="#03-slo">03 SLO、告警与症状速查</a><ul>
+<li><a href="#31-slo">3.1 SLO 示例（按业务调整）</a></li>
+<li><a href="#32">3.2 告警分级</a></li>
+<li><a href="#33">3.3 高频症状速查</a></li>
+</ul>
+</li>
+<li><a href="#05-slo-30">05 分步实操：SLO 合规分析与应急手册（约 30 分钟）</a><ul>
+<li><a href="#step-1-slo-10">Step 1 SLO 合规分析脚本（10 分钟）</a></li>
+<li><a href="#step-2-10">Step 2 应急手册生成器（10 分钟）</a></li>
+<li><a href="#step-3-10">Step 3 故障演练与复盘（10 分钟）</a></li>
+</ul>
+</li>
+<li><a href="#06">06 参数详解：监控与应急速查</a></li>
+<li><a href="#07">07 高频踩坑排查</a></li>
+<li><a href="#08">08 进阶优化：线上运营进化方向</a></li>
+<li><a href="#09-top3">09 本章核心总结（TOP3）</a></li>
+<li><a href="#10">10 连载衔接</a></li>
+<li><a href="#11">11 话题标签与系列目录索引</a></li>
+</ul>
+</div>
+</details>
+<article class="article">
+<h1 id="llm45">【LLM全栈工程·第45章】线上问题闭环排查：监控、告警与应急手册</h1>
+<blockquote>
+<p>本篇为「LLM全栈工程」连载第 45 章（Voice前沿）。主标题以上为准；备选标题（供运营选用，不进正文）：① 模型上线后怎么盯？LLM 专属监控指标与 SLO；② 线上翻车怎么救？症状→排查→应急手册；③ 从告警到复盘：线上问题闭环与 badcase 回流。</p>
+</blockquote>
+<hr />
+<h2 id="_1">单篇内容卡（排版本忽略）</h2>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>章节定位</td>
+<td>「全栈工程联调与项目落地」第 5 篇：线上监控、告警与应急闭环</td>
+</tr>
+<tr>
+<td>适用场景</td>
+<td>小团队上线运维；企业 LLM 平台 SRE；值班工程师</td>
+</tr>
+<tr>
+<td>核心知识点</td>
+<td>可观测三支柱；LLM 指标；SLO/告警；故障排查手册；复盘闭环</td>
+</tr>
+<tr>
+<td>技术选型</td>
+<td>Prometheus/Grafana 类监控；日志与 trace；告警渠道</td>
+</tr>
+<tr>
+<td>分步实操</td>
+<td>定义 SLO → 样例指标合规分析 → 生成应急手册 → 故障演练与复盘</td>
+</tr>
+<tr>
+<td>参数详解</td>
+<td>TTFT/TPOT 阈值、错误率、SLO 窗口、告警级别</td>
+</tr>
+<tr>
+<td>踩坑排查</td>
+<td>只看平均、告警轰炸、没有 runbook、故障不复盘</td>
+</tr>
+<tr>
+<td>进阶优化</td>
+<td>自动回滚、质量漂移检测、badcase 自动回流</td>
+</tr>
+<tr>
+<td>本章 TOP3</td>
+<td>见文末</td>
+</tr>
+<tr>
+<td>下章预告</td>
+<td>第 46 章：工程化最佳实践汇总（手册终章）</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="01">01 开篇导语</h2>
+<p>模型上线后，最怕的不是出问题，而是<strong>出了问题没人知道、知道了不知道怎么查、查完了不改进</strong>。</p>
+<p>LLM 服务的问题分层很清晰：</p>
+<ul>
+<li><strong>平台层</strong>：OOM、掉卡、队列爆；</li>
+<li><strong>性能层</strong>：TTFT/TPOT 劣化、排队；</li>
+<li><strong>质量层</strong>：胡言乱语、拒答率飙升、空回复；</li>
+<li><strong>成本层</strong>：重试循环、token 暴涨。</li>
+</ul>
+<p>本章建立三层机制：</p>
+<ol>
+<li><strong>监控</strong>：指标+日志+trace 三支柱，LLM 专属指标；</li>
+<li><strong>告警与应急</strong>：SLO 阈值与症状→排查手册；</li>
+<li><strong>闭环</strong>：复盘→badcase 回流→回归测试（接第 44 章迭代）。</li>
+</ol>
+<blockquote>
+<p>一句话记住本章：<strong>监控让你“看得见”，告警让你“来得及”，手册让你“查得对”，复盘让你“不再犯”。</strong></p>
+</blockquote>
+<hr />
+<h2 id="02-llm">02 白话原理：LLM 可观测三支柱</h2>
+<table>
+<thead>
+<tr>
+<th>支柱</th>
+<th>看什么</th>
+<th>例子</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>指标</td>
+<td>数字趋势</td>
+<td>TTFT P95、错误率、KV 用量</td>
+</tr>
+<tr>
+<td>日志</td>
+<td>单请求细节</td>
+<td>请求/响应/错误栈</td>
+</tr>
+<tr>
+<td>Trace</td>
+<td>跨服务链路</td>
+<td>网关→推理→RAG 各段耗时</td>
+</tr>
+</tbody>
+</table>
+<p>LLM 专属指标：</p>
+<ul>
+<li>性能：TTFT/TPOT/ITL/排队时延；</li>
+<li>容量：KV Cache 用量、GPU 利用率、max-num-seqs 打满率；</li>
+<li>质量：空回复率、拒答率、格式错误率、负反馈率；</li>
+<li>成本：token 数、单请求成本、重试率。</li>
+</ul>
+<blockquote>
+<p>记忆锚点：<strong>通用监控看“挂没挂”，LLM 监控还要看“答得好不好、贵不贵”——质量与成本指标是 LLM 特有的第四维。</strong></p>
+</blockquote>
+<h2 id="03-slo">03 SLO、告警与症状速查</h2>
+<h3 id="31-slo">3.1 SLO 示例（按业务调整）</h3>
+<table>
+<thead>
+<tr>
+<th>指标</th>
+<th>SLO</th>
+<th>告警线</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>可用性</td>
+<td>99.9%</td>
+<td>&lt;99.5% 持续 5min</td>
+</tr>
+<tr>
+<td>TTFT P95</td>
+<td>&lt;800ms</td>
+<td>&gt;1.5s 持续 5min</td>
+</tr>
+<tr>
+<td>TPOT P95</td>
+<td>&lt;60ms/token</td>
+<td>&gt;120ms</td>
+</tr>
+<tr>
+<td>错误率</td>
+<td>&lt;1%</td>
+<td>&gt;2%</td>
+</tr>
+<tr>
+<td>空回复/拒答率</td>
+<td>&lt;3%</td>
+<td>&gt;5%</td>
+</tr>
+<tr>
+<td>单请求成本</td>
+<td>&lt;预算线</td>
+<td>超线 20%</td>
+</tr>
+</tbody>
+</table>
+<h3 id="32">3.2 告警分级</h3>
+<table>
+<thead>
+<tr>
+<th>级别</th>
+<th>响应</th>
+<th>例子</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>P0</td>
+<td>立即</td>
+<td>全站不可用/质量崩溃</td>
+</tr>
+<tr>
+<td>P1</td>
+<td>15 分钟</td>
+<td>错误率飙升/TTFT 劣化</td>
+</tr>
+<tr>
+<td>P2</td>
+<td>当天</td>
+<td>成本超线/个别模型问题</td>
+</tr>
+<tr>
+<td>P3</td>
+<td>记录</td>
+<td>轻微漂移</td>
+</tr>
+</tbody>
+</table>
+<h3 id="33">3.3 高频症状速查</h3>
+<table>
+<thead>
+<tr>
+<th>症状</th>
+<th>先查</th>
+<th>常见根因</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>全站超时</td>
+<td>部署/回滚</td>
+<td>新版本/实例全挂</td>
+</tr>
+<tr>
+<td>TTFT 飙升</td>
+<td>队列/实例数</td>
+<td>流量突增/实例不足</td>
+</tr>
+<tr>
+<td>输出变慢</td>
+<td>GPU/TPOT</td>
+<td>掉卡/量化回退/热降频</td>
+</tr>
+<tr>
+<td>胡言乱语</td>
+<td>模型版本/模板/量化</td>
+<td>发错模型/配置错</td>
+</tr>
+<tr>
+<td>拒答率飙升</td>
+<td>安全策略/prompt</td>
+<td>规则误伤/模型漂移</td>
+</tr>
+<tr>
+<td>成本暴涨</td>
+<td>重试/死循环</td>
+<td>客户端重试/超长输出</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>铁律：<strong>先恢复服务（回滚/扩容），再查根因；复盘时把根因变成回归测试与 badcase，进入第 44 章迭代闭环。</strong></p>
+</blockquote>
+<h2 id="05-slo-30">05 分步实操：SLO 合规分析与应急手册（约 30 分钟）</h2>
+<h3 id="step-1-slo-10">Step 1 SLO 合规分析脚本（10 分钟）</h3>
+<p>保存 scripts/llm_slo.py：</p>
+<pre><code class="language-python"># scripts/llm_slo.py —— LLM 指标 SLO 合规分析
+# 用法：python llm_slo.py [指标csv]（缺省生成样例）
+import csv
+import json
+import pathlib
+import random
+import statistics
+import sys
+
+root = pathlib.Path(__file__).resolve().parent.parent
+csv_path = sys.argv[1] if len(sys.argv) &gt; 1 else str(root / &quot;logs&quot; / &quot;metrics_sample.csv&quot;)
+random.seed(9)
+
+if not pathlib.Path(csv_path).exists():
+    rows = []
+    for _ in range(1000):
+        rows.append({&quot;ttft_ms&quot;: max(50, random.gauss(300, 120)),
+                     &quot;error&quot;: 1 if random.random() &lt; 0.008 else 0,
+                     &quot;empty&quot;: 1 if random.random() &lt; 0.01 else 0})
+    with open(csv_path, &quot;w&quot;, newline=&quot;&quot;, encoding=&quot;utf-8&quot;) as f:
+        writer = csv.DictWriter(f, fieldnames=[&quot;ttft_ms&quot;, &quot;error&quot;, &quot;empty&quot;])
+        writer.writeheader()
+        writer.writerows(rows)
+
+rows = list(csv.DictReader(open(csv_path, encoding=&quot;utf-8&quot;)))
+n = len(rows)
+ttfts = sorted(float(r[&quot;ttft_ms&quot;]) for r in rows)
+errors = sum(int(r[&quot;error&quot;]) for r in rows)
+empties = sum(int(r[&quot;empty&quot;]) for r in rows)
+
+def pct(values, p):
+    return values[min(len(values) - 1, int(len(values) * p))]
+
+report = {
+    &quot;total&quot;: n,
+    &quot;availability&quot;: round(1 - errors / max(1, n), 4),
+    &quot;error_rate&quot;: round(errors / max(1, n), 4),
+    &quot;empty_rate&quot;: round(empties / max(1, n), 4),
+    &quot;ttft_p50_ms&quot;: round(pct(ttfts, 0.5), 1),
+    &quot;ttft_p95_ms&quot;: round(pct(ttfts, 0.95), 1),
+    &quot;slo&quot;: {&quot;ttft_p95_ok&quot;: pct(ttfts, 0.95) &lt; 800,
+            &quot;error_ok&quot;: errors / max(1, n) &lt; 0.02,
+            &quot;empty_ok&quot;: empties / max(1, n) &lt; 0.03},
+}
+with open(root / &quot;logs&quot; / &quot;slo_report.json&quot;, &quot;w&quot;, encoding=&quot;utf-8&quot;) as f:
+    json.dump(report, f, ensure_ascii=False, indent=2)
+print(json.dumps(report, ensure_ascii=False, indent=2))
+</code></pre>
+<p>运行：</p>
+<pre><code class="language-bash">python scripts/llm_slo.py
+cat logs/slo_report.json
+</code></pre>
+<blockquote>
+<p>生产用法：把 Prometheus 等监控的指标导出为 CSV/直接查询，按同一套阈值算 SLO；阈值写在配置里而不是脚本里。</p>
+</blockquote>
+<h3 id="step-2-10">Step 2 应急手册生成器（10 分钟）</h3>
+<p>保存 scripts/runbook_gen.py：</p>
+<pre><code class="language-python"># scripts/runbook_gen.py —— 按症状生成应急步骤
+# 用法：python runbook_gen.py &lt;latency|quality|outage|cost&gt;
+import pathlib
+import sys
+
+root = pathlib.Path(__file__).resolve().parent.parent
+symptom = sys.argv[1] if len(sys.argv) &gt; 1 else &quot;latency&quot;
+
+RUNBOOK = {
+    &quot;outage&quot;: [&quot;确认部署版本与实例状态&quot;, &quot;回滚到上一 release tag（第 41 章）&quot;, &quot;恢复后查根因：新模型/配置/依赖&quot;],
+    &quot;latency&quot;: [&quot;看队列深度与实例数&quot;, &quot;扩容/摘除慢实例&quot;, &quot;查 TTFT/TPOT 分段（网关/推理/网络）&quot;, &quot;看是否掉卡/热降频/量化回退&quot;],
+    &quot;quality&quot;: [&quot;确认线上模型版本与评测版本一致&quot;, &quot;抽查日志里的输入输出（模板/量化）&quot;, &quot;触发安全策略? 查拒答率&quot;, &quot;收集 badcase 进第 44 章迭代&quot;],
+    &quot;cost&quot;: [&quot;查重试率与死循环&quot;, &quot;查输出 token 分布/超长输出&quot;, &quot;查是否多条 prompt 重复请求&quot;, &quot;设成本告警与上限&quot;],
+}
+
+lines = [&quot;# 线上应急手册&quot;, &quot;&quot;, &quot;## 症状：&quot; + symptom, &quot;&quot;]
+for step in RUNBOOK.get(symptom, RUNBOOK[&quot;latency&quot;]):
+    lines.append(&quot;- [ ] &quot; + step)
+lines.append(&quot;&quot;)
+lines.append(&quot;## 复盘要求&quot;, &quot;- 时间线/根因/影响/改进项&quot;, &quot;- badcase 与回归测试回流&quot;, &quot;&quot;)
+
+out = root / &quot;docs&quot; / &quot;incident_runbook.md&quot;
+out.write_text(&quot;\n&quot;.join(lines), encoding=&quot;utf-8&quot;)
+print(&quot;\n&quot;.join(lines))
+print(&quot;-&gt;&quot;, out)
+</code></pre>
+<p>运行并生成多个症状手册：</p>
+<pre><code class="language-bash">python scripts/runbook_gen.py latency
+python scripts/runbook_gen.py quality
+cat docs/incident_runbook.md
+</code></pre>
+<h3 id="step-3-10">Step 3 故障演练与复盘（10 分钟）</h3>
+<ol>
+<li>用第 34 章“kill 实例”与第 44 章“Canary 回滚”做两次演练，对照手册打勾；</li>
+<li>演练后写复盘（时间线/根因/改进项），把根因变成评测集新题（第 20 章）与回归测试；</li>
+<li>归档：</li>
+</ol>
+<pre><code class="language-bash">cd llm-demo
+git add scripts logs docs
+git commit -m &quot;ops: SLO checker + runbook gen + drills&quot;
+git tag ops-v1
+</code></pre>
+<blockquote>
+<p>复盘不是追责：<strong>目标是把“这次踩的坑”变成“下次不会踩的测试与手册”。</strong></p>
+</blockquote>
+<h2 id="06">06 参数详解：监控与应急速查</h2>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>参考</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>可用性 SLO</td>
+<td>99.9%</td>
+<td>按业务调</td>
+</tr>
+<tr>
+<td>TTFT P95</td>
+<td>&lt;800ms</td>
+<td>业务敏感可更严</td>
+</tr>
+<tr>
+<td>TPOT P95</td>
+<td>&lt;60ms/token</td>
+<td>流式体验</td>
+</tr>
+<tr>
+<td>空回复/拒答率</td>
+<td>&lt;3%</td>
+<td>质量红线</td>
+</tr>
+<tr>
+<td>告警窗口</td>
+<td>持续 5min 才告</td>
+<td>防抖动轰炸</td>
+</tr>
+<tr>
+<td>复盘时限</td>
+<td>48h 内</td>
+<td>趁热打铁</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="07">07 高频踩坑排查</h2>
+<p><strong>坑 1：只看平均</strong>
+症状：均值正常，P99 已崩。
+解法：P50/P95/P99 全看；排队与错误率分开。</p>
+<p><strong>坑 2：告警轰炸</strong>
+症状：一抖动就告警，值班人麻木。
+解法：持续窗口+分级+收敛；告警也要演练。</p>
+<p><strong>坑 3：没有 runbook</strong>
+症状：半夜告警，值班人现查文档。
+解法：高频症状预写手册（本章生成器），每年演练两次。</p>
+<p><strong>坑 4：只监控平台不监控质量</strong>
+症状：服务 100% 可用，回答全是胡话。
+解法：加质量指标（空回复/拒答/负反馈/抽样评测）。</p>
+<p><strong>坑 5：故障不复盘</strong>
+症状：同一个坑一年踩三次。
+解法：48h 复盘+改进项进迭代与测试。</p>
+<p><strong>坑 6：回滚太慢</strong>
+症状：明知新版本有问题还排查两小时。
+解法：先回滚再排查；回滚演练常态化。</p>
+<p><strong>坑 7：指标与评测脱节</strong>
+症状：线上指标好但评测集没更新，漂移看不见。
+解法：线上 badcase 定期回流评测集（第 44 章）。</p>
+<hr />
+<h2 id="08">08 进阶优化：线上运营进化方向</h2>
+<p><strong>① 自动回滚</strong>：核心指标触发阈值自动切回上一 release，人工只需确认。</p>
+<p><strong>② 质量漂移检测</strong>：对线上输出做抽样自动评测（关键词/LLM 裁判），质量分低于基线自动告警。</p>
+<p><strong>③ badcase 自动回流</strong>：负反馈/低分回答自动进入数据管道，下一轮训练自动包含（闭环第 44 章）。</p>
+<p><strong>④ 成本实时看板</strong>：按模型/租户/请求类型拆成本，超预算自动限流。</p>
+<p><strong>⑤ 全链路 Trace</strong>：request_id 贯穿网关→推理→RAG，任何“慢在哪/错在哪”一键定位。</p>
+<hr />
+<h2 id="09-top3">09 本章核心总结（TOP3）</h2>
+<p><strong>TOP1</strong>：LLM 监控 = 平台指标 + 性能指标 + 质量指标 + 成本指标；SLO 要有 P50/P95/P99 与错误率，别只看平均。</p>
+<p><strong>TOP2</strong>：告警分级 + 持续窗口 + 预写 runbook；故障处理顺序是“先恢复（回滚/扩容），再查根因”。</p>
+<p><strong>TOP3</strong>：复盘必须闭环：48 小时内写时间线/根因/改进项，根因变成评测题与回归测试——让同样的故障只发生一次。</p>
+<hr />
+<h2 id="10">10 连载衔接</h2>
+<p>上一章（第 44 章）建立了迭代升级纪律；本章让线上“看得见、来得及、查得对、不再犯”——运营闭环完成。</p>
+<p>下一章是 46 章旅程的终点：【第 46 章】工程化最佳实践汇总：把整条生产线沉淀成团队可复用的手册与 SOP。</p>
+<hr />
+<h2 id="11">11 话题标签与系列目录索引</h2>
+<p>话题标签：<strong>#LLM全栈工程 #监控告警 #SLO #应急手册 #可观测性 #工程实战</strong>（Voice前沿 出品，欢迎收藏追更）</p>
+<p><strong>系列目录（46 章，随连载持续更新）</strong></p>
+<p>第 0 阶段·开篇引路
+- 01 一条大模型生产线全程发生了什么
+- 02 2 小时跑通最小闭环
+- 03 预训练到底在练什么</p>
+<p>第 1 阶段·预训练工程·数据核心层
+- 04 数据管道从零构建
+- 05 数据清洗规范与脏数据剔除
+- 06 文本过滤实战
+- 07 数据去重算法
+- 08 敏感数据脱敏
+- 09 数据质量打分体系
+- 10 领域专属数据构建
+- 11 增量预训练方案
+- 12 预训练超参选型与硬件适配
+- 13 断点续训、收敛判断与失败排查</p>
+<p>第 2 阶段·微调与对齐体系
+- 14 全维度微调技术拆解
+- 15 SFT 监督微调实战
+- 16 SFT 数据集构建与标注规范
+- 17 微调模板设计
+- 18 微调超参调优策略
+- 19 过拟合、欠拟合与灾难遗忘
+- 20 微调效果评估体系
+- 21 多轮对话微调专项
+- 22 模型蒸馏实战
+- 23 奖励模型训练
+- 24 RLHF/PPO 工程落地
+- 25 RLAIF：AI 反馈自动对齐
+- 26 小样本与领域自适应微调</p>
+<p>第 3 阶段·基础部署与推理优化
+- 27 部署框架横向对比
+- 28 vLLM 部署实战与参数调优
+- 29 SGLang 高性能推理落地
+- 30 TensorRT-LLM 固化与加速
+- 31 模型量化实操
+- 32 模型剪枝与蒸馏压缩
+- 33 KV Cache 优化与上下文窗口拓展
+- 34 流式推理封装与高并发服务化</p>
+<p>第 4 阶段·高阶推理编译器极致优化
+- 35 推理编译器核心原理
+- 36 算子融合与计算图编译实战
+- 37 动态 shape 与显存编译器优化
+- 38 Speculative Decoding 投机推理进阶
+- 39 批量调度与并行深度适配
+- 40 内核重构与编译级量化</p>
+<p>第 5 阶段·全栈工程联调与项目落地
+- 41 全链路串联：数据到上线一体化流程
+- 42 领域大模型定制化落地
+- 43 高并发生产适配与端侧部署
+- 44 模型迭代升级与性能对标评测
+- 45 线上问题闭环排查（本篇）
+- 46 工程化最佳实践汇总（手册终章）</p>
+<hr />
+<p><em>本文由 Voice前沿 出品 · 转载注明出处 · 下一篇：第 46 章 工程化最佳实践汇总（手册终章）</em></p>
+</article>
+<nav class="prevnext"><a href="ch44.html">← 第 44 章 【LLM全栈工程·第44章】模型迭代升级与性能对标评测：让模型持续变好且可证明</a><a href="ch46.html" style="text-align:right">第 46 章 【LLM全栈工程·第46章】工程化最佳实践汇总：LLM 工业级全栈落地手册（终章） →</a></nav>
+</main>
+<footer class="wrap"><p>LLM 全栈工程 · Voice前沿 出品 · 46 章连载 · 收藏即手册</p></footer>
+</body>
+</html>

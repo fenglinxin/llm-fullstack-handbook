@@ -1,0 +1,591 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>【LLM全栈工程·第22章】模型蒸馏实战：大模型萃取小模型的完整流程 · LLM 全栈工程</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header"><div class="wrap">
+<a class="brand" href="../index.html">LLM 全栈工程<small>LLM 工业级全栈工程落地手册 · 46 章</small></a>
+<nav><a href="../index.html">目录</a><a href="https://github.com/">GitHub 仓库</a></nav>
+</div></header>
+<main class="wrap">
+<nav class="crumbs"><a href="../index.html">全部章节</a> / 【LLM全栈工程·第22章】模型蒸馏实战：大模型萃取小模型的完整流程</nav>
+<details class="toc-box"><summary>本章目录</summary><div class="toc">
+<ul>
+<li><a href="#_1">单篇内容卡（排版本忽略）</a></li>
+<li><a href="#01">01 开篇导语</a></li>
+<li><a href="#02">02 白话原理：两种蒸馏方式</a><ul>
+<li><a href="#21">2.1 黑盒蒸馏（离线生成式，最常用）</a></li>
+<li><a href="#22-logitskl">2.2 白盒蒸馏（Logits/KL 蒸馏）</a></li>
+<li><a href="#23">2.3 蒸馏到底转移了什么</a></li>
+</ul>
+</li>
+<li><a href="#03">03 蒸馏流水线与数据质量</a><ul>
+<li><a href="#31">3.1 六步流水线</a></li>
+<li><a href="#32">3.2 提示池设计</a></li>
+<li><a href="#33">3.3 教师输出的质量过滤（关键）</a></li>
+</ul>
+</li>
+<li><a href="#04">04 技术选型：学生模型与蒸馏方式</a></li>
+<li><a href="#05-7b-3b-152">05 分步实操：7B 教师 → 3B 学生（约 1.5–2 小时）</a><ul>
+<li><a href="#step-1-10">Step 1 下载学生底座（10 分钟，如未下载）</a></li>
+<li><a href="#step-2-5">Step 2 造提示池（5 分钟）</a></li>
+<li><a href="#step-3-1020">Step 3 教师批量生成（10–20 分钟）</a></li>
+<li><a href="#step-4-2040">Step 4 学生训练（20–40 分钟）</a></li>
+<li><a href="#step-5-10">Step 5 师生同测（10 分钟）</a></li>
+<li><a href="#step-6-10">Step 6 困难样本迭代（10 分钟）</a></li>
+<li><a href="#step-7">Step 7 归档</a></li>
+</ul>
+</li>
+<li><a href="#06">06 参数详解：蒸馏速查</a></li>
+<li><a href="#07">07 高频踩坑排查</a></li>
+<li><a href="#08">08 进阶优化：蒸馏的进化方向</a></li>
+<li><a href="#09-top3">09 本章核心总结（TOP3）</a></li>
+<li><a href="#10">10 连载衔接</a></li>
+<li><a href="#11">11 话题标签与系列目录索引</a></li>
+</ul>
+</div>
+</details>
+<article class="article">
+<h1 id="llm22">【LLM全栈工程·第22章】模型蒸馏实战：大模型萃取小模型的完整流程</h1>
+<blockquote>
+<p>本篇为「LLM全栈工程」连载第 22 章（Voice前沿）。主标题以上为准；备选标题（供运营选用，不进正文）：① 大模型太贵？把 7B 的能力蒸馏给 3B：完整流程；② 黑盒蒸馏与白盒蒸馏：怎么选、怎么做；③ 蒸馏不是“抄答案”：数据收集、质量过滤与效果验收。</p>
+</blockquote>
+<hr />
+<h2 id="_1">单篇内容卡（排版本忽略）</h2>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>章节定位</td>
+<td>「微调与对齐体系」第 9 篇：用大模型（教师）训练小模型（学生），平衡质量与成本</td>
+</tr>
+<tr>
+<td>适用场景</td>
+<td>个人学习（小模型蒸馏实验）；小团队降本部署；企业端侧/高并发场景</td>
+</tr>
+<tr>
+<td>核心知识点</td>
+<td>黑盒/白盒蒸馏；教师数据收集与过滤；学生训练；效果 gap 验收与迭代</td>
+</tr>
+<tr>
+<td>技术选型</td>
+<td>API 教师（黑盒）vs 同词表 logits 蒸馏（白盒）；学生规模与底座选择</td>
+</tr>
+<tr>
+<td>分步实操</td>
+<td>造提示池 → 教师批量生成 → 质量过滤 → 学生 SFT → 师生同测对比 → 困难样本迭代</td>
+</tr>
+<tr>
+<td>参数详解</td>
+<td>教师采样温度、每提示样本数、蒸馏温度 T、KL 权重、学生超参</td>
+</tr>
+<tr>
+<td>踩坑排查</td>
+<td>把教师幻觉教给学生、提示分布偏、只在教师数据上评测、词表不一致硬做 logits 蒸馏</td>
+</tr>
+<tr>
+<td>进阶优化</td>
+<td>多教师、迭代蒸馏、logits+序列混合、蒸馏+量化组合</td>
+</tr>
+<tr>
+<td>本章 TOP3</td>
+<td>见文末</td>
+</tr>
+<tr>
+<td>下章预告</td>
+<td>第 23 章：奖励模型训练</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="01">01 开篇导语</h2>
+<p>你有一个效果很好的 7B 领域助手，但老板说：<strong>并发要翻 10 倍、单卡要跑 4 路、时延要砍一半</strong>——怎么办？</p>
+<p>直接换小模型？效果掉太多。硬扛大模型？成本爆炸。中间的解法是<strong>模型蒸馏</strong>：让大模型当“教师”，把自己会的东西教给一个小模型“学生”。</p>
+<p>蒸馏不是让小学生背大学生的学习笔记，而是让教师<strong>生成大量高质量示范</strong>（黑盒蒸馏），或在训练时直接传递“思考概率分布”（白盒蒸馏），让学生学会教师的格式、风格与行为。</p>
+<p>本章走完一条完整流水线：</p>
+<p><strong>提示池 → 教师生成 → 质量过滤 → 学生训练 → 师生同测 → 困难样本迭代</strong></p>
+<p>以主线工程为例：7B 帮助台助手（教师）→ 3B 学生模型，跑通全流程并量化 gap。</p>
+<blockquote>
+<p>一句话记住本章：<strong>蒸馏的本质是“用教师的输出分布训练学生”，质量在数据、上限在教师、验收在独立评测集。</strong></p>
+</blockquote>
+<hr />
+<h2 id="02">02 白话原理：两种蒸馏方式</h2>
+<h3 id="21">2.1 黑盒蒸馏（离线生成式，最常用）</h3>
+<p>教师只暴露“输入→输出”接口（本地 vLLM 或云 API）：</p>
+<ol>
+<li>准备一批多样化的提示（问题/指令/场景）；</li>
+<li>让教师生成答案（可多次采样）；</li>
+<li>过滤质量后作为 SFT 数据训练学生。</li>
+</ol>
+<p>优点：不要求同词表、实现简单、能蒸馏任何模型（包括闭源 API）。
+缺点：只能学到“答案”，学不到教师内部的概率细节。</p>
+<h3 id="22-logitskl">2.2 白盒蒸馏（Logits/KL 蒸馏）</h3>
+<p>教师与学生同词表、可本地加载时，训练学生不仅拟合标准答案（hard label），还拟合教师的 token 概率分布（soft label）：</p>
+<pre><code class="language-text">loss = α × CE(学生, 标准答案)
+     + (1-α) × KL(学生分布, 教师分布 / T) × T²
+</code></pre>
+<ul>
+<li>T（温度）把教师分布“软化”，暴露更多“次优但合理的候选”；</li>
+<li>KL 权重 α 控制跟老师还是跟标准答案；</li>
+<li>适合同家族模型（如 Qwen2.5-7B → Qwen2.5-3B），词表一致才能对齐位置。</li>
+</ul>
+<h3 id="23">2.3 蒸馏到底转移了什么</h3>
+<p>主要转移：<strong>输出格式、行文风格、行为边界（拒答/澄清）、任务结构</strong>。知识的上限仍受学生容量限制——学生学不会教师“不知道但能推理出来”的深层能力时，效果 gap 是正常的。</p>
+<blockquote>
+<p>记忆锚点：<strong>黑盒蒸馏=看教师交的作业学；白盒蒸馏=连教师的草稿纸（概率）一起学。</strong></p>
+</blockquote>
+<h2 id="03">03 蒸馏流水线与数据质量</h2>
+<h3 id="31">3.1 六步流水线</h3>
+<pre><code class="language-text">① 提示池（覆盖任务/难度/边界）
+   → ② 教师批量生成（temperature 0.7，可多次采样）
+   → ③ 质量过滤（空答/幻觉/格式错/重复）
+   → ④ 学生 SFT 训练（3B LoRA 或全参）
+   → ⑤ 师生同测（同一独立评测集）
+   → ⑥ 困难样本回流（学生答错的题再让教师生成）
+</code></pre>
+<h3 id="32">3.2 提示池设计</h3>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>要求</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>任务覆盖</td>
+<td>与线上任务矩阵一致（问答/JSON/拒答/多轮）</td>
+</tr>
+<tr>
+<td>难度分布</td>
+<td>简单 40% / 中等 40% / 困难 20%</td>
+</tr>
+<tr>
+<td>边界样本</td>
+<td>拒答、信息不足、模糊提问各 5%–10%</td>
+</tr>
+<tr>
+<td>数量</td>
+<td>起步 500–2000 条提示；质量优先</td>
+</tr>
+</tbody>
+</table>
+<h3 id="33">3.3 教师输出的质量过滤（关键）</h3>
+<p>教师也会胡说，必须过滤：</p>
+<table>
+<thead>
+<tr>
+<th>检查</th>
+<th>规则示例</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>空答/过短</td>
+<td>输出 &lt;10 字丢弃</td>
+</tr>
+<tr>
+<td>格式合规</td>
+<td>要求 JSON 的必须可解析</td>
+</tr>
+<tr>
+<td>幻觉实体</td>
+<td>关键实体不在知识库中→丢弃（领域蒸馏）</td>
+</tr>
+<tr>
+<td>重复</td>
+<td>同提示多次采样去重（MinHash）</td>
+</tr>
+<tr>
+<td>越界</td>
+<td>拒答类提示教师没拒→人工/规则修正</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>生产经验：<strong>教师数据按“通过率”分层</strong>，只把教师做对且稳定的样本教给学生；把教师自己的错误教给学生是蒸馏最常见的翻车点。</p>
+</blockquote>
+<hr />
+<h2 id="04">04 技术选型：学生模型与蒸馏方式</h2>
+<table>
+<thead>
+<tr>
+<th>决策</th>
+<th>推荐</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>学生规模</td>
+<td>教师的 1/2~1/10</td>
+<td>7B→3B 是性价比常见组合</td>
+</tr>
+<tr>
+<td>学生底座</td>
+<td>与教师同家族优先</td>
+<td>白盒蒸馏需要同词表</td>
+</tr>
+<tr>
+<td>蒸馏方式</td>
+<td>黑盒起步</td>
+<td>简单、通用、先验证收益</td>
+</tr>
+<tr>
+<td>何时上白盒</td>
+<td>黑盒有瓶颈且同词表</td>
+<td>通常能再追回几个点</td>
+</tr>
+<tr>
+<td>训练方式</td>
+<td>学生 LoRA 起步</td>
+<td>数据量上万再考虑全参</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>验收标准：学生要达到教师效果的 85%–95%（按业务指标），同时时延/成本下降 50%+——<strong>gap 在可接受范围且收益显著，蒸馏才算成功</strong>。</p>
+</blockquote>
+<h2 id="05-7b-3b-152">05 分步实操：7B 教师 → 3B 学生（约 1.5–2 小时）</h2>
+<p>沿用 llm-demo。教师=第 15 章 helpdesk-sft（7B，服务在 8000）；学生=Qwen2.5-3B-Instruct（需下载，或换 1.5B）。</p>
+<h3 id="step-1-10">Step 1 下载学生底座（10 分钟，如未下载）</h3>
+<pre><code class="language-bash">cd llm-demo
+hf download Qwen/Qwen2.5-3B-Instruct --local-dir models/Qwen2.5-3B-Instruct
+# 或国内：modelscope download --model Qwen/Qwen2.5-3B-Instruct --local_dir models/Qwen2.5-3B-Instruct
+</code></pre>
+<h3 id="step-2-5">Step 2 造提示池（5 分钟）</h3>
+<p>保存 scripts/make_prompts.py：</p>
+<pre><code class="language-python"># scripts/make_prompts.py —— 蒸馏提示池：领域 + 通用
+import json
+import pathlib
+
+root = pathlib.Path(__file__).resolve().parent.parent
+out_path = root / &quot;data&quot; / &quot;distill_prompts.jsonl&quot;
+
+rows = []
+for line in open(root / &quot;data&quot; / &quot;sft_dataset_v1.jsonl&quot;, encoding=&quot;utf-8&quot;):
+    row = json.loads(line)
+    if row.get(&quot;input&quot;):
+        rows.append({&quot;instruction&quot;: row[&quot;instruction&quot;], &quot;input&quot;: row[&quot;input&quot;],
+                     &quot;task_type&quot;: row[&quot;task_type&quot;], &quot;difficulty&quot;: row[&quot;difficulty&quot;]})
+
+general = [
+    (&quot;请用一句话解释 Transformer 的注意力机制。&quot;, &quot;general&quot;, &quot;easy&quot;),
+    (&quot;Python 的列表和元组有什么区别？&quot;, &quot;general&quot;, &quot;easy&quot;),
+    (&quot;数据库索引为什么能加速查询？&quot;, &quot;general&quot;, &quot;medium&quot;),
+    (&quot;梯度下降的 learning rate 太大通常会怎样？&quot;, &quot;general&quot;, &quot;medium&quot;),
+    (&quot;写一个 Python 函数判断字符串是否为回文。&quot;, &quot;general&quot;, &quot;hard&quot;),
+    (&quot;解释一下什么是 KV Cache，它节省了什么计算？&quot;, &quot;general&quot;, &quot;hard&quot;),
+]
+for q, task, diff in general:
+    rows.append({&quot;instruction&quot;: &quot;&quot;, &quot;input&quot;: q, &quot;task_type&quot;: task, &quot;difficulty&quot;: diff})
+
+with open(out_path, &quot;w&quot;, encoding=&quot;utf-8&quot;) as f:
+    for row in rows:
+        f.write(json.dumps(row, ensure_ascii=False) + &quot;\n&quot;)
+print(&quot;prompts:&quot;, len(rows), &quot;-&gt;&quot;, out_path)
+</code></pre>
+<p>运行：</p>
+<pre><code class="language-bash">python scripts/make_prompts.py
+</code></pre>
+<h3 id="step-3-1020">Step 3 教师批量生成（10–20 分钟）</h3>
+<p>保存 scripts/distill_collect.py：</p>
+<pre><code class="language-python"># scripts/distill_collect.py —— 黑盒蒸馏：教师批量生成答案
+# 用法：python distill_collect.py &lt;teacher_url&gt; &lt;teacher_model&gt; [采样数]
+import json
+import pathlib
+import sys
+
+from openai import OpenAI
+
+teacher_url = sys.argv[1] if len(sys.argv) &gt; 1 else &quot;http://localhost:8000/v1&quot;
+teacher_model = sys.argv[2] if len(sys.argv) &gt; 2 else &quot;helpdesk-sft&quot;
+samples = int(sys.argv[3]) if len(sys.argv) &gt; 3 else 1
+
+root = pathlib.Path(__file__).resolve().parent.parent
+client = OpenAI(base_url=teacher_url, api_key=&quot;EMPTY&quot;)
+prompts = [json.loads(line) for line in open(root / &quot;data&quot; / &quot;distill_prompts.jsonl&quot;, encoding=&quot;utf-8&quot;)]
+
+out_rows = []
+for p in prompts:
+    user_content = p[&quot;instruction&quot;] + (&quot;\n&quot; + p[&quot;input&quot;] if p[&quot;instruction&quot;] else p[&quot;input&quot;])
+    for _ in range(samples):
+        resp = client.chat.completions.create(
+            model=teacher_model,
+            messages=[{&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: user_content}],
+            temperature=0.7,
+            max_tokens=400,
+        )
+        answer = resp.choices[0].message.content.strip()
+        if len(answer) &lt; 10:
+            continue  # 空答过滤
+        out_rows.append({&quot;instruction&quot;: p[&quot;instruction&quot;], &quot;input&quot;: p[&quot;input&quot;],
+                         &quot;output&quot;: answer, &quot;task_type&quot;: p[&quot;task_type&quot;],
+                         &quot;difficulty&quot;: p[&quot;difficulty&quot;], &quot;teacher&quot;: teacher_model})
+
+out_path = root / &quot;data&quot; / &quot;distill_teacher_data.jsonl&quot;
+with open(out_path, &quot;w&quot;, encoding=&quot;utf-8&quot;) as f:
+    for row in out_rows:
+        f.write(json.dumps(row, ensure_ascii=False) + &quot;\n&quot;)
+print(&quot;teacher samples:&quot;, len(out_rows), &quot;-&gt;&quot;, out_path)
+</code></pre>
+<p>运行：</p>
+<pre><code class="language-bash">python scripts/distill_collect.py http://localhost:8000/v1 helpdesk-sft 1
+head -n 2 data/distill_teacher_data.jsonl
+</code></pre>
+<blockquote>
+<p>提示：教师服务 temperature 用 0.7 保留多样性；关键任务（JSON/拒答）建议 temperature 0.2 再生成一份，避免格式飘。质量过滤可复用第 20 章 eval 的 JSON 校验逻辑。</p>
+</blockquote>
+<h3 id="step-4-2040">Step 4 学生训练（20–40 分钟）</h3>
+<p>在 data/dataset_info.json 注册 distill_teacher_data（Alpaca 三列同前），保存 configs/distill_student.yaml：</p>
+<pre><code class="language-yaml">model_name_or_path: models/Qwen2.5-3B-Instruct
+template: qwen
+stage: sft
+finetuning_type: lora
+dataset_dir: data
+dataset: distill_teacher_data
+val_size: 0.1
+cutoff_len: 1024
+per_device_train_batch_size: 2
+per_device_eval_batch_size: 2
+gradient_accumulation_steps: 8
+learning_rate: 3.0e-4
+num_train_epochs: 4.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.1
+bf16: true
+seed: 42
+eval_strategy: steps
+eval_steps: 10
+logging_steps: 5
+save_steps: 20
+lora_rank: 16
+lora_alpha: 32
+output_dir: outputs/student-3b-distill
+</code></pre>
+<pre><code class="language-bash">CUDA_VISIBLE_DEVICES=0 llamafactory-cli train configs/distill_student.yaml
+llamafactory-cli export configs/export_student.yaml   # 指向 outputs/student-3b-distill
+</code></pre>
+<h3 id="step-5-10">Step 5 师生同测（10 分钟）</h3>
+<p>起两个服务：教师 helpdesk-sft（8000）、学生（8001，--served-model-name student-3b），用第 20 章 eval_suite 跑同一份 eval_test：</p>
+<pre><code class="language-bash">python scripts/eval_suite.py helpdesk-sft http://localhost:8000/v1 data/eval_test.jsonl
+python scripts/eval_suite.py student-3b http://localhost:8001/v1 data/eval_test.jsonl
+</code></pre>
+<p>填对比表：</p>
+<table>
+<thead>
+<tr>
+<th>指标</th>
+<th>教师 7B</th>
+<th>学生 3B</th>
+<th>gap</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>领域题通过率</td>
+<td>?</td>
+<td>?</td>
+<td>?</td>
+</tr>
+<tr>
+<td>JSON/拒答任务</td>
+<td>?</td>
+<td>?</td>
+<td>?</td>
+</tr>
+<tr>
+<td>首 token 时延（参考）</td>
+<td>?</td>
+<td>?</td>
+<td>?</td>
+</tr>
+<tr>
+<td>吞吐/成本（参考）</td>
+<td>?</td>
+<td>?</td>
+<td>?</td>
+</tr>
+</tbody>
+</table>
+<p><strong>判断</strong>：gap 可接受（如 ≤10%）且成本/时延显著下降 → 蒸馏成功；否则进入 Step 6。</p>
+<h3 id="step-6-10">Step 6 困难样本迭代（10 分钟）</h3>
+<ol>
+<li>把学生答错的评测题收集成 fail_prompts.jsonl；</li>
+<li>让教师重新生成（可 temperature 0.3 生成更稳的答案）并人工确认；</li>
+<li>追加进 distill_teacher_data，重新训练学生；</li>
+<li>重复直到 gap 达标或连续两轮无改善（说明学生容量到顶，需换更大学生或白盒蒸馏）。</li>
+</ol>
+<h3 id="step-7">Step 7 归档</h3>
+<pre><code class="language-bash">cd llm-demo
+git add data configs outputs scripts
+git commit -m &quot;distill: teacher 7B -&gt; student 3B v1 (gap report)&quot;
+git tag distill-v1
+</code></pre>
+<blockquote>
+<p>生产提示：蒸馏数据要按月刷新（教师升级后重新生成），学生跟着教师版本走；记录 teacher 版本进数据 manifest。</p>
+</blockquote>
+<h2 id="06">06 参数详解：蒸馏速查</h2>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>参考取值</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>教师采样温度</td>
+<td>0.2（稳定）/0.7（多样）</td>
+<td>关键格式任务用低温</td>
+</tr>
+<tr>
+<td>每提示采样数</td>
+<td>1–4</td>
+<td>采样越多越稳，成本越高</td>
+</tr>
+<tr>
+<td>提示池规模</td>
+<td>500–5000 条起步</td>
+<td>覆盖任务矩阵</td>
+</tr>
+<tr>
+<td>学生规模</td>
+<td>教师 1/2~1/10</td>
+<td>7B→3B 常用</td>
+</tr>
+<tr>
+<td>白盒温度 T</td>
+<td>2–4</td>
+<td>软化教师分布</td>
+</tr>
+<tr>
+<td>KL 权重 (1-α)</td>
+<td>0.3–0.7</td>
+<td>同词表白盒时用</td>
+</tr>
+<tr>
+<td>学生 LR</td>
+<td>LoRA 2e-4~4e-4</td>
+<td>比正常 SFT 略高可试</td>
+</tr>
+<tr>
+<td>学生 epoch</td>
+<td>3–5</td>
+<td>教师数据量大时 2–3</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="07">07 高频踩坑排查</h2>
+<p><strong>坑 1：把教师的幻觉教给学生</strong>
+症状：学生学会了教师编造的型号/政策。
+解法：教师输出必须过“知识库实体校验+人工抽检”；教师答错的样本不要进训练。</p>
+<p><strong>坑 2：提示池分布偏</strong>
+症状：全是简单问答，学生一遇困难/边界题就崩。
+解法：提示池按任务矩阵与难度分层；包含拒答/模糊/多轮场景。</p>
+<p><strong>坑 3：只在教师生成的数据上评测</strong>
+症状：学生“看起来和教师一样”，一上独立评测就露馅。
+解法：评测用独立集（第 20 章 eval_test），且评测题不与蒸馏提示池重叠。</p>
+<p><strong>坑 4：词表不同硬做白盒蒸馏</strong>
+症状：KL 对齐报错或位置错乱。
+解法：白盒蒸馏只用于同词表同家族模型；跨词表用黑盒蒸馏。</p>
+<p><strong>坑 5：学生太小硬塞</strong>
+症状：3B 学不会 70B 的推理，gap 巨大且不再下降。
+解法：明确蒸馏转移的是格式/行为；推理能力 gap 大时换更大学生或保留大模型做复杂任务路由。</p>
+<p><strong>坑 6：学生训练数据里混入教师旧版本</strong>
+症状：教师升级后学生还在学旧答案，行为滞后。
+解法：蒸馏数据带 teacher 版本；教师升级后重新生成。</p>
+<p><strong>坑 7：只做一次蒸馏</strong>
+症状：学生答错的题永远答错。
+解法：困难样本迭代闭环：学生失败 → 教师重生成 → 追加训练，直到 gap 达标。</p>
+<hr />
+<h2 id="08">08 进阶优化：蒸馏的进化方向</h2>
+<p><strong>① 白盒 Logits 蒸馏</strong>：同词表场景用 KL(学生||教师/T) 补充 hard label，通常比纯黑盒再追 2–5 个点；实现要点是温度软化与 α 平衡。</p>
+<p><strong>② 多教师蒸馏</strong>：领域教师（7B SFT）+ 通用教师（更大底座）按任务路由生成，学生各取所长；答案冲突时用规则/置信度仲裁。</p>
+<p><strong>③ 迭代/自蒸馏</strong>：学生超过教师一部分任务后，把学生的强项样本也加入蒸馏集（self-distillation），形成持续提升。</p>
+<p><strong>④ 蒸馏+量化组合</strong>：先 7B→3B 蒸馏，再对 3B 做 INT4/INT8 量化（第 31 章），端侧/高并发场景的终极性价比组合。</p>
+<p><strong>⑤ 在线蒸馏</strong>：训练学生时实时采样教师（同 batch），避免离线数据分布过期；成本高，适合大厂训练平台。</p>
+<hr />
+<h2 id="09-top3">09 本章核心总结（TOP3）</h2>
+<p><strong>TOP1</strong>：蒸馏转移的是格式/风格/行为边界，不是“变出教师没有的知识”；黑盒蒸馏通用简单，白盒 logits 蒸馏同词表时更优。</p>
+<p><strong>TOP2</strong>：流水线 = 提示池（覆盖矩阵）→ 教师生成（控温+多采样）→ 质量过滤（幻觉/格式/重复）→ 学生训练 → 独立评测 → 困难样本迭代；教师自己的错误绝不能进训练集。</p>
+<p><strong>TOP3</strong>：验收标准是“学生达到教师 85%–95% 效果 + 成本/时延显著下降”；gap 不达标先查提示池与过滤，再考虑白盒蒸馏或更大学生。</p>
+<hr />
+<h2 id="10">10 连载衔接</h2>
+<p>上一章（第 21 章）让模型能连续对话；本章给了模型“变小”的能力——主线工程现在可以按场景选择 7B 教师或 3B 学生，成本与质量开始有了调度空间。</p>
+<p>下一章进入“好坏评判”训练：【第 23 章】奖励模型训练：偏好数据、训练与防 Reward Hacking。对齐时代的大门正式打开。</p>
+<hr />
+<h2 id="11">11 话题标签与系列目录索引</h2>
+<p>话题标签：<strong>#LLM全栈工程 #模型蒸馏 #知识蒸馏 #小模型 #降本部署 #工程实战</strong>（Voice前沿 出品，欢迎收藏追更）</p>
+<p><strong>系列目录（46 章，随连载持续更新）</strong></p>
+<p>第 0 阶段·开篇引路
+- 01 一条大模型生产线全程发生了什么
+- 02 2 小时跑通最小闭环
+- 03 预训练到底在练什么</p>
+<p>第 1 阶段·预训练工程·数据核心层
+- 04 数据管道从零构建
+- 05 数据清洗规范与脏数据剔除
+- 06 文本过滤实战
+- 07 数据去重算法
+- 08 敏感数据脱敏
+- 09 数据质量打分体系
+- 10 领域专属数据构建
+- 11 增量预训练方案
+- 12 预训练超参选型与硬件适配
+- 13 断点续训、收敛判断与失败排查</p>
+<p>第 2 阶段·微调与对齐体系
+- 14 全维度微调技术拆解
+- 15 SFT 监督微调实战
+- 16 SFT 数据集构建与标注规范
+- 17 微调模板设计
+- 18 微调超参调优策略
+- 19 过拟合、欠拟合与灾难遗忘
+- 20 微调效果评估体系
+- 21 多轮对话微调专项
+- 22 模型蒸馏实战（本篇）
+- 23 奖励模型训练
+- 24 RLHF/PPO 工程落地
+- 25 RLAIF：AI 反馈自动对齐
+- 26 小样本与领域自适应微调</p>
+<p>第 3 阶段·基础部署与推理优化
+- 27 部署框架横向对比
+- 28 vLLM 部署实战与参数调优
+- 29 SGLang 高性能推理落地
+- 30 TensorRT-LLM 固化与加速
+- 31 模型量化实操
+- 32 模型剪枝与蒸馏压缩
+- 33 KV Cache 优化与上下文窗口拓展
+- 34 流式推理封装与高并发服务化</p>
+<p>第 4 阶段·高阶推理编译器极致优化
+- 35 推理编译器核心原理
+- 36 算子融合与计算图编译
+- 37 动态 shape 与显存编译器优化
+- 38 Speculative Decoding 投机推理进阶
+- 39 批量调度与并行深度适配
+- 40 内核重构与编译级量化</p>
+<p>第 5 阶段·全栈工程联调与项目落地
+- 41 全链路串联：数据到上线一体化流程
+- 42 领域大模型定制化落地
+- 43 高并发生产适配与端侧部署
+- 44 模型迭代升级与性能对标评测
+- 45 线上问题闭环排查
+- 46 工程化最佳实践汇总（手册终章）</p>
+<hr />
+<p><em>本文由 Voice前沿 出品 · 转载注明出处 · 下一篇：第 23 章 奖励模型训练</em></p>
+</article>
+<nav class="prevnext"><a href="ch21.html">← 第 21 章 【LLM全栈工程·第21章】多轮对话微调专项：长上下文、多轮数据与稳定性</a><a href="ch23.html" style="text-align:right">第 23 章 【LLM全栈工程·第23章】奖励模型训练：偏好数据、训练与防 Reward Hacking →</a></nav>
+</main>
+<footer class="wrap"><p>LLM 全栈工程 · Voice前沿 出品 · 46 章连载 · 收藏即手册</p></footer>
+</body>
+</html>

@@ -1,0 +1,463 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>【LLM全栈工程·第35章】推理编译器核心原理：图编译、IR、调度与代码生成 · LLM 全栈工程</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header"><div class="wrap">
+<a class="brand" href="../index.html">LLM 全栈工程<small>LLM 工业级全栈工程落地手册 · 46 章</small></a>
+<nav><a href="../index.html">目录</a><a href="https://github.com/">GitHub 仓库</a></nav>
+</div></header>
+<main class="wrap">
+<nav class="crumbs"><a href="../index.html">全部章节</a> / 【LLM全栈工程·第35章】推理编译器核心原理：图编译、IR、调度与代码生成</nav>
+<details class="toc-box"><summary>本章目录</summary><div class="toc">
+<ul>
+<li><a href="#_1">单篇内容卡（排版本忽略）</a></li>
+<li><a href="#01">01 开篇导语</a></li>
+<li><a href="#02-eager-graph">02 白话原理：Eager 与 Graph</a><ul>
+<li><a href="#21-eager">2.1 Eager 模式的浪费</a></li>
+<li><a href="#22-graph">2.2 Graph 模式</a></li>
+</ul>
+</li>
+<li><a href="#03">03 编译器流水线：四个阶段</a><ul>
+<li><a href="#31-ir">3.1 三层 IR</a></li>
+<li><a href="#32-pass">3.2 典型图优化 pass</a></li>
+</ul>
+</li>
+<li><a href="#04">04 生态角色：谁在做什么</a></li>
+<li><a href="#05-torchcompile-20">05 分步实操：torch.compile 前后对比（约 20 分钟）</a><ul>
+<li><a href="#step-1-10">Step 1 编译收益小实验（10 分钟）</a></li>
+<li><a href="#step-2-10">Step 2 给真实模型开编译（10 分钟）</a></li>
+</ul>
+</li>
+<li><a href="#06">06 参数详解：编译配置速查</a></li>
+<li><a href="#07">07 高频踩坑排查</a></li>
+<li><a href="#08">08 进阶优化：编译器的进化方向</a></li>
+<li><a href="#09-top3">09 本章核心总结（TOP3）</a></li>
+<li><a href="#10">10 连载衔接</a></li>
+<li><a href="#11">11 话题标签与系列目录索引</a></li>
+</ul>
+</div>
+</details>
+<article class="article">
+<h1 id="llm35ir">【LLM全栈工程·第35章】推理编译器核心原理：图编译、IR、调度与代码生成</h1>
+<blockquote>
+<p>本篇为「LLM全栈工程」连载第 35 章（Voice前沿）。主标题以上为准；备选标题（供运营选用，不进正文）：① PyTorch 逐算子执行有多浪费？推理编译器原理白话版；② 从 Dynamo 到 Triton：一次 torch.compile 的完整旅程；③ 图优化、调度与代码生成：编译器到底在做什么。</p>
+</blockquote>
+<hr />
+<h2 id="_1">单篇内容卡（排版本忽略）</h2>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>章节定位</td>
+<td>「高阶推理编译器极致优化」开篇：建立编译器心智模型</td>
+</tr>
+<tr>
+<td>适用场景</td>
+<td>个人学习（torch.compile 实验）；工程师理解推理框架底层；企业性能优化选型</td>
+</tr>
+<tr>
+<td>核心知识点</td>
+<td>Eager vs Graph；编译器四阶段（前端/IR/调度/代码生成）；CUDA Graph 与 Triton 角色</td>
+</tr>
+<tr>
+<td>技术选型</td>
+<td>torch.compile / Triton / TensorRT-LLM / TVM 类编译器何时用</td>
+</tr>
+<tr>
+<td>分步实操</td>
+<td>torch.compile 前后对比实验：编译耗时、图捕获、稳态加速比</td>
+</tr>
+<tr>
+<td>参数详解</td>
+<td>mode/dynamic/fullgraph/CUDA Graph/autotune</td>
+</tr>
+<tr>
+<td>踩坑排查</td>
+<td>编译时间过长、graph break、动态 shape 重编译、数值微变、显存上升</td>
+</tr>
+<tr>
+<td>进阶优化</td>
+<td>自定义 Triton kernel、CUDA Graph 手动捕获、PD 分离编译</td>
+</tr>
+<tr>
+<td>本章 TOP3</td>
+<td>见文末</td>
+</tr>
+<tr>
+<td>下章预告</td>
+<td>第 36 章：算子融合与计算图编译实战</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="01">01 开篇导语</h2>
+<p>前面章节的优化都在“框架参数”层：换框架、调并发、做量化。这一阶段我们要往最底层走——<strong>让模型的计算图被真正“编译”</strong>。</p>
+<p>先看一个事实：PyTorch Eager 模式下，每个算子都是一次“Python 调度 + kernel 启动”。一个 7B 模型生成一个 token 可能要执行几百个 kernel，其中大量 kernel 又小又快——<strong>启动开销占比可能超过计算本身</strong>。</p>
+<p>推理编译器做的事就像“把零散工序合并成流水线”：</p>
+<ol>
+<li>把模型“读”成一张计算图（前端捕获）；</li>
+<li>在图级别做优化（融合冗余、消除浪费）；</li>
+<li>为 GPU 做调度（分块、并行、向量化）；</li>
+<li>生成高效 kernel（CUDA/Triton 代码），并固化成可复用制品（CUDA Graph）。</li>
+</ol>
+<p>本章先建立这套心智模型，第 36–40 章再逐个深入。</p>
+<blockquote>
+<p>一句话记住本章：<strong>编译器 = 前端捕获图 + 中间表示优化 + 调度适配硬件 + 后端生成代码；它把“每算子一次启动”变成“整图一次执行”。</strong></p>
+</blockquote>
+<hr />
+<h2 id="02-eager-graph">02 白话原理：Eager 与 Graph</h2>
+<h3 id="21-eager">2.1 Eager 模式的浪费</h3>
+<pre><code class="language-text">for token in 生成循环:
+    x = rms_norm(x)     # Python 调用 + kernel 启动
+    x = qkv_proj(x)     # 又一个 kernel
+    x = attention(x)    # 又一个 kernel
+    ...
+</code></pre>
+<p>每一步都有：Python 解释开销、张量调度开销、kernel 启动开销。算子越碎，浪费占比越高。</p>
+<h3 id="22-graph">2.2 Graph 模式</h3>
+<p>把整段计算“先画成图，再一起执行”：</p>
+<pre><code class="language-text">图捕获（trace）：rms_norm → qkv → attention → ...
+图优化：融合相邻算子、消除临时张量
+调度：决定分块/线程/共享内存布局
+代码生成：生成一个（或几个）大 kernel
+执行：一次启动，跑完整段
+</code></pre>
+<blockquote>
+<p>记忆锚点：<strong>Eager 是“每步叫一次外卖”，Graph 是“一次点一桌、厨房统一做”——省的是来回跑腿（kernel 启动与 Python 开销）。</strong></p>
+</blockquote>
+<h2 id="03">03 编译器流水线：四个阶段</h2>
+<table>
+<thead>
+<tr>
+<th>阶段</th>
+<th>做什么</th>
+<th>类比</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>前端捕获</td>
+<td>把 Python 模型变成计算图（Dynamo 等）</td>
+<td>采访记录流程</td>
+</tr>
+<tr>
+<td>IR 优化</td>
+<td>图级改写：融合/消除/布局（Aten IR/Inductor IR）</td>
+<td>优化流程顺序</td>
+</tr>
+<tr>
+<td>调度</td>
+<td>分块/线程映射/向量化（Triton/调度器）</td>
+<td>排班与分工</td>
+</tr>
+<tr>
+<td>代码生成</td>
+<td>生成 CUDA/C++/Triton 内核并 autotune</td>
+<td>写最终执行手册</td>
+</tr>
+</tbody>
+</table>
+<h3 id="31-ir">3.1 三层 IR</h3>
+<table>
+<thead>
+<tr>
+<th>IR</th>
+<th>级别</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Graph IR（FX Graph）</td>
+<td>高层</td>
+<td>算子级图，做融合决策</td>
+</tr>
+<tr>
+<td>Inductor IR</td>
+<td>中层</td>
+<td>张量运算抽象，做布局/循环变换</td>
+</tr>
+<tr>
+<td>Triton IR</td>
+<td>低层</td>
+<td>接近硬件的 kernel 中间表示</td>
+</tr>
+</tbody>
+</table>
+<h3 id="32-pass">3.2 典型图优化 pass</h3>
+<ul>
+<li><strong>算子融合</strong>：相邻算子合成一个 kernel（RMSNorm+量化、QKV、MLP）；</li>
+<li><strong>死代码消除</strong>：删掉不用的分支/张量；</li>
+<li><strong>内存规划</strong>：复用临时 buffer，减少 alloc/free；</li>
+<li><strong>布局优化</strong>：把转置/重排提前，减少拷贝；</li>
+<li><strong>常数折叠</strong>：编译期算掉不变部分。</li>
+</ul>
+<hr />
+<h2 id="04">04 生态角色：谁在做什么</h2>
+<table>
+<thead>
+<tr>
+<th>工具</th>
+<th>角色</th>
+<th>适合</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>torch.compile</td>
+<td>通用 PyTorch 图编译（Dynamo+Inductor）</td>
+<td>快速获得收益</td>
+</tr>
+<tr>
+<td>CUDA Graph</td>
+<td>捕获 kernel 序列，消除启动开销</td>
+<td>固定 shape 的生成循环</td>
+</tr>
+<tr>
+<td>Triton</td>
+<td>手写/生成自定义 kernel 的语言</td>
+<td>深度定制算子</td>
+</tr>
+<tr>
+<td>TensorRT-LLM</td>
+<td>全图固化编译（第 30 章）</td>
+<td>NVIDIA 生产极致</td>
+</tr>
+<tr>
+<td>TVM 类</td>
+<td>通用深度学习编译器</td>
+<td>多硬件/自定义后端</td>
+</tr>
+</tbody>
+</table>
+<p><strong>工程判断</strong>：先 torch.compile + CUDA Graph（零/低代码成本），不够再手写 Triton，最后才考虑 TRT-LLM 全图固化。</p>
+<h2 id="05-torchcompile-20">05 分步实操：torch.compile 前后对比（约 20 分钟）</h2>
+<h3 id="step-1-10">Step 1 编译收益小实验（10 分钟）</h3>
+<p>保存 scripts/compile_demo.py：</p>
+<pre><code class="language-python"># scripts/compile_demo.py —— Eager vs torch.compile 对比
+import time
+
+import torch
+
+def net(x, w1, b1, w2, b2):
+    h = torch.relu(x @ w1 + b1)
+    h = h / (torch.sqrt((h * h).sum(-1, keepdim=True)) + 1e-5)
+    return h @ w2 + b2
+
+device = &quot;cuda&quot; if torch.cuda.is_available() else &quot;cpu&quot;
+print(&quot;device:&quot;, device, &quot;torch:&quot;, torch.__version__)
+
+x = torch.randn(512, 1024, device=device)
+w1 = torch.randn(1024, 1024, device=device) * 0.1
+b1 = torch.randn(1024, device=device) * 0.1
+w2 = torch.randn(1024, 1024, device=device) * 0.1
+b2 = torch.randn(1024, device=device) * 0.1
+
+def sync():
+    if device == &quot;cuda&quot;:
+        torch.cuda.synchronize()
+
+def bench(fn, iters=50):
+    for _ in range(5):
+        fn()
+    sync()
+    start = time.time()
+    for _ in range(iters):
+        fn()
+    sync()
+    return (time.time() - start) / iters
+
+eager_ms = bench(lambda: net(x, w1, b1, w2, b2)) * 1000
+
+mode = &quot;reduce-overhead&quot; if device == &quot;cuda&quot; else &quot;default&quot;
+compiled = torch.compile(net, mode=mode)
+# 第一次调用包含编译时间
+t0 = time.time()
+compiled(x, w1, b1, w2, b2)
+compile_s = time.time() - t0
+
+compiled_ms = bench(lambda: compiled(x, w1, b1, w2, b2)) * 1000
+
+print(&quot;eager avg: %.3f ms&quot; % eager_ms)
+print(&quot;compile first-call: %.1f s&quot; % compile_s)
+print(&quot;compiled avg: %.3f ms&quot; % compiled_ms)
+print(&quot;steady speedup: %.2fx&quot; % (eager_ms / max(compiled_ms, 1e-6)))
+</code></pre>
+<p>运行：</p>
+<pre><code class="language-bash">python scripts/compile_demo.py
+</code></pre>
+<p><strong>预期</strong>：GPU 上稳态通常 1.2–2x（算子越碎收益越大）；首次调用含编译耗时（几秒到几十秒）；CPU 上收益较小属正常。</p>
+<h3 id="step-2-10">Step 2 给真实模型开编译（10 分钟）</h3>
+<pre><code class="language-python"># 在你的推理/评测脚本中（以 transformers 为例）
+model = AutoModelForCausalLM.from_pretrained(...)
+model = torch.compile(model, mode=&quot;reduce-overhead&quot;)  # GPU
+# 首次推理会编译，后续请求享受图优化收益
+</code></pre>
+<ol>
+<li>用第 27 章 bench 脚本对比“编译前/后”的 TTFT 与吞吐（注意先 warmup 再测）；</li>
+<li>对比生成质量是否变化（编译可能微调数值，需跑 20 题回归）；</li>
+<li>记录 torch 版本、mode、编译耗时、收益，归档：</li>
+</ol>
+<pre><code class="language-bash">cd llm-demo
+git add scripts logs
+git commit -m &quot;compile: torch.compile demo + model-level bench&quot;
+git tag compile-basic-v1
+</code></pre>
+<blockquote>
+<p>注意：CUDA Graph（reduce-overhead）会占额外显存；显存紧张时用 default 模式或关掉。</p>
+</blockquote>
+<h2 id="06">06 参数详解：编译配置速查</h2>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>作用</th>
+<th>参考</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>mode=default</td>
+<td>平衡编译时间与优化</td>
+<td>起步用</td>
+</tr>
+<tr>
+<td>mode=reduce-overhead</td>
+<td>额外捕获 CUDA Graph</td>
+<td>GPU 显存够时用</td>
+</tr>
+<tr>
+<td>mode=max-autotune</td>
+<td>最大 autotune</td>
+<td>追求极致、能等编译</td>
+</tr>
+<tr>
+<td>dynamic=False</td>
+<td>按静态 shape 编译</td>
+<td>动态 shape 会重编译</td>
+</tr>
+<tr>
+<td>fullgraph=True</td>
+<td>要求整图无 break</td>
+<td>有 break 会报错提示</td>
+</tr>
+<tr>
+<td>编译 warmup</td>
+<td>首次推理前跑 1–2 次</td>
+<td>生产预热</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="07">07 高频踩坑排查</h2>
+<p><strong>坑 1：编译时间过长</strong>
+症状：首次请求等几十秒。
+解法：生产启动时预热（发几个 dummy 请求）；dynamic=False；分阶段编译。</p>
+<p><strong>坑 2：graph break</strong>
+症状：图在某个算子处断开，优化失效（日志有 break 提示）。
+解法：看 break 原因（如数据相关控制流）；重写该段或用自定义 kernel。</p>
+<p><strong>坑 3：动态 shape 反复重编译</strong>
+症状：每次新长度都编译一次，吞吐暴跌。
+解法：固定/分桶长度；dynamic 配置或让框架处理（vLLM 有自己的方案）。</p>
+<p><strong>坑 4：数值微变</strong>
+症状：编译后个别回答不同。
+解法：跑 20–50 题质量回归；误差不可接受则关掉可疑融合。</p>
+<p><strong>坑 5：显存上升</strong>
+症状：CUDA Graph 捕获后显存多占几 GB。
+解法：换 default 模式；减少 graph 数量/长度。</p>
+<p><strong>坑 6：只信 speedup 数字</strong>
+症状：单算子快 2 倍，整模型没快多少。
+解法：整模型 bench；编译器收益与算子组成强相关。</p>
+<p><strong>坑 7：编译与框架重复优化</strong>
+症状：vLLM 内部已优化，外层再 torch.compile 反而冲突。
+解法：框架级优化与自研编译二选一，别叠床架屋。</p>
+<hr />
+<h2 id="08">08 进阶优化：编译器的进化方向</h2>
+<p><strong>① 手动 CUDA Graph</strong>：对生成循环用 torch.cuda.CUDAGraph 捕获固定 shape 的执行，启动开销降到接近零（第 36 章细节）。</p>
+<p><strong>② 自定义 Triton kernel</strong>：融合框架没覆盖的算子组合，或为特殊结构写 kernel（第 40 章）。</p>
+<p><strong>③ 编译预热与缓存</strong>：把编译产物缓存到磁盘，新实例启动秒级恢复（torch.compile 支持缓存，版本相关）。</p>
+<p><strong>④ 子图选择</strong>：不是整图都要编译——对热点子图编译、冷路径保持 eager，兼顾编译时间与收益。</p>
+<p><strong>⑤ PD 分离编译</strong>：prefill 与 decode 的计算特征不同，分别编译/优化（第 39 章）。</p>
+<hr />
+<h2 id="09-top3">09 本章核心总结（TOP3）</h2>
+<p><strong>TOP1</strong>：编译器四阶段 = 前端捕获图 → IR 优化（融合/消除/布局）→ 调度适配硬件 → 后端代码生成；Eager 的浪费在“每算子一次启动”。</p>
+<p><strong>TOP2</strong>：工程路径按成本递增：torch.compile + CUDA Graph → 自定义 Triton → TRT-LLM 全图固化；框架已优化时别重复编译。</p>
+<p><strong>TOP3</strong>：编译收益要整模型 bench + 质量回归双验证；注意首次编译耗时、动态 shape 重编译、CUDA Graph 显存与 graph break 四大坑。</p>
+<hr />
+<h2 id="10">10 连载衔接</h2>
+<p>上一章（第 34 章）完成了服务化；本章建立了编译器心智模型——图、IR、调度、代码生成四个词从此不再是黑话。</p>
+<p>下一章动手融算子：【第 36 章】算子融合与计算图编译实战。从 RMSNorm+量化融合到 CUDA Graph 捕获，把理论变成收益。</p>
+<hr />
+<h2 id="11">11 话题标签与系列目录索引</h2>
+<p>话题标签：<strong>#LLM全栈工程 #推理编译器 #torch.compile #CUDA Graph #Triton #工程实战</strong>（Voice前沿 出品，欢迎收藏追更）</p>
+<p><strong>系列目录（46 章，随连载持续更新）</strong></p>
+<p>第 0 阶段·开篇引路
+- 01 一条大模型生产线全程发生了什么
+- 02 2 小时跑通最小闭环
+- 03 预训练到底在练什么</p>
+<p>第 1 阶段·预训练工程·数据核心层
+- 04 数据管道从零构建
+- 05 数据清洗规范与脏数据剔除
+- 06 文本过滤实战
+- 07 数据去重算法
+- 08 敏感数据脱敏
+- 09 数据质量打分体系
+- 10 领域专属数据构建
+- 11 增量预训练方案
+- 12 预训练超参选型与硬件适配
+- 13 断点续训、收敛判断与失败排查</p>
+<p>第 2 阶段·微调与对齐体系
+- 14 全维度微调技术拆解
+- 15 SFT 监督微调实战
+- 16 SFT 数据集构建与标注规范
+- 17 微调模板设计
+- 18 微调超参调优策略
+- 19 过拟合、欠拟合与灾难遗忘
+- 20 微调效果评估体系
+- 21 多轮对话微调专项
+- 22 模型蒸馏实战
+- 23 奖励模型训练
+- 24 RLHF/PPO 工程落地
+- 25 RLAIF：AI 反馈自动对齐
+- 26 小样本与领域自适应微调</p>
+<p>第 3 阶段·基础部署与推理优化
+- 27 部署框架横向对比
+- 28 vLLM 部署实战与参数调优
+- 29 SGLang 高性能推理落地
+- 30 TensorRT-LLM 固化与加速
+- 31 模型量化实操
+- 32 模型剪枝与蒸馏压缩
+- 33 KV Cache 优化与上下文窗口拓展
+- 34 流式推理封装与高并发服务化</p>
+<p>第 4 阶段·高阶推理编译器极致优化
+- 35 推理编译器核心原理（本篇）
+- 36 算子融合与计算图编译实战
+- 37 动态 shape 与显存编译器优化
+- 38 Speculative Decoding 投机推理进阶
+- 39 批量调度与并行深度适配
+- 40 内核重构与编译级量化</p>
+<p>第 5 阶段·全栈工程联调与项目落地
+- 41 全链路串联：数据到上线一体化流程
+- 42 领域大模型定制化落地
+- 43 高并发生产适配与端侧部署
+- 44 模型迭代升级与性能对标评测
+- 45 线上问题闭环排查
+- 46 工程化最佳实践汇总（手册终章）</p>
+<hr />
+<p><em>本文由 Voice前沿 出品 · 转载注明出处 · 下一篇：第 36 章 算子融合与计算图编译实战</em></p>
+</article>
+<nav class="prevnext"><a href="ch34.html">← 第 34 章 【LLM全栈工程·第34章】流式推理封装与高并发服务化：从单实例到生产网关</a><a href="ch36.html" style="text-align:right">第 36 章 【LLM全栈工程·第36章】算子融合与计算图编译实战：把零散 kernel 合成一个 →</a></nav>
+</main>
+<footer class="wrap"><p>LLM 全栈工程 · Voice前沿 出品 · 46 章连载 · 收藏即手册</p></footer>
+</body>
+</html>

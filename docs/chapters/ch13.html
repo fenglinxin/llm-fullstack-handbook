@@ -1,0 +1,600 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>【LLM全栈工程·第13章】断点续训、收敛判断与训练失败排查：把“训练翻车”变成流程 · LLM 全栈工程</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header"><div class="wrap">
+<a class="brand" href="../index.html">LLM 全栈工程<small>LLM 工业级全栈工程落地手册 · 46 章</small></a>
+<nav><a href="../index.html">目录</a><a href="https://github.com/">GitHub 仓库</a></nav>
+</div></header>
+<main class="wrap">
+<nav class="crumbs"><a href="../index.html">全部章节</a> / 【LLM全栈工程·第13章】断点续训、收敛判断与训练失败排查：把“训练翻车”变成流程</nav>
+<details class="toc-box"><summary>本章目录</summary><div class="toc">
+<ul>
+<li><a href="#_1">单篇内容卡（排版本忽略）</a></li>
+<li><a href="#01">01 开篇导语</a></li>
+<li><a href="#02">02 白话原理：一次训练 = 一个“可恢复的状态机”</a><ul>
+<li><a href="#21">2.1 训练状态不止是“模型权重”</a></li>
+<li><a href="#22">2.2 为什么数据游标和随机状态重要</a></li>
+</ul>
+</li>
+<li><a href="#03-checkpoint">03 Checkpoint 设计：目录、频率与保留策略</a><ul>
+<li><a href="#31-checkpoint">3.1 一个规范的 checkpoint 目录</a></li>
+<li><a href="#32">3.2 保存频率与保留策略</a></li>
+<li><a href="#33">3.3 续训的两种模式</a></li>
+</ul>
+</li>
+<li><a href="#04">04 收敛判断：什么时候“该停、该调、该回滚”</a><ul>
+<li><a href="#41">4.1 判断收敛的四条曲线</a></li>
+<li><a href="#42">4.2 三条实战经验</a></li>
+<li><a href="#43">4.3 停机决策清单</a></li>
+</ul>
+</li>
+<li><a href="#05-30">05 分步实操：日志分析 + 断电恢复演练（30 分钟）</a><ul>
+<li><a href="#step-1-5">Step 1 生成一份“带事故”的样例训练日志（5 分钟）</a></li>
+<li><a href="#step-2-10">Step 2 写日志分析脚本（10 分钟）</a></li>
+<li><a href="#step-3-5">Step 3 跑分析，看“黑匣子”怎么报事故（5 分钟）</a></li>
+<li><a href="#step-4-10">Step 4 断电恢复演练（10 分钟，核心动作）</a></li>
+</ul>
+</li>
+<li><a href="#06">06 参数详解：稳定性配置速查</a></li>
+<li><a href="#07">07 高频踩坑排查</a></li>
+<li><a href="#08">08 进阶优化：训练稳定性的进化方向</a></li>
+<li><a href="#09-top3">09 本章核心总结（TOP3）</a></li>
+<li><a href="#10">10 连载衔接</a></li>
+<li><a href="#11">11 话题标签与系列目录索引</a></li>
+</ul>
+</div>
+</details>
+<article class="article">
+<h1 id="llm13">【LLM全栈工程·第13章】断点续训、收敛判断与训练失败排查：把“训练翻车”变成流程</h1>
+<blockquote>
+<p>本篇为「LLM全栈工程」连载第 13 章（Voice前沿）。主标题以上为准；备选标题（供运营选用，不进正文）：① 训练到一半挂了怎么办？checkpoint 设计与断点续训全流程；② loss spike、NaN、不收敛：训练日志排查手册；③ 大模型训练不是“跑完就赢”：收敛判断与失败预案。</p>
+</blockquote>
+<hr />
+<h2 id="_1">单篇内容卡（排版本忽略）</h2>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>章节定位</td>
+<td>「预训练工程·数据核心层」收官篇：建立 checkpoint、收敛判断与失败排查三套机制</td>
+</tr>
+<tr>
+<td>适用场景</td>
+<td>个人学习（单卡实验防白跑）；小团队 CPT/微调；企业预训练稳定性保障</td>
+</tr>
+<tr>
+<td>核心知识点</td>
+<td>checkpoint 该存什么；断点续训的状态完整性；收敛判断指标；训练日志分析与高频故障排查</td>
+</tr>
+<tr>
+<td>技术选型</td>
+<td>保存格式与频率；日志工具（wandb/TensorBoard/自建 jsonl）；resume 方式对比</td>
+</tr>
+<tr>
+<td>分步实操</td>
+<td>设计 checkpoint 目录 → 生成样例日志 → 日志分析脚本诊断 → 断电恢复演练 → 打版本</td>
+</tr>
+<tr>
+<td>参数详解</td>
+<td>保存间隔、保留份数、异常检测阈值、收敛判据</td>
+</tr>
+<tr>
+<td>踩坑排查</td>
+<td>NaN/Inf、loss spike、吞吐骤降、OOM、训练挂起、checkpoint 静默损坏</td>
+</tr>
+<tr>
+<td>进阶优化</td>
+<td>异步保存、故障自动恢复、loss 预测、健康检查与告警</td>
+</tr>
+<tr>
+<td>本章 TOP3</td>
+<td>见文末</td>
+</tr>
+<tr>
+<td>下章预告</td>
+<td>第 14 章：全维度微调技术拆解</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="01">01 开篇导语</h2>
+<p>预训练/CPT 有一个共同特点：<strong>贵</strong>。一次 7B 全参训练可能烧掉几十万卡时，如果跑到第 3 天因为一个 NaN 崩了、而你没有 checkpoint——前面的钱全部白花。</p>
+<p>更隐蔽的问题是“假成功”：loss 在降，但模型其实在背数据；loss spike 后自己恢复了，没人发现数据里混进毒样本；训练挂起 8 小时，日志里只有一行 NCCL timeout……</p>
+<p>本章把训练稳定性拆成三件事：</p>
+<ol>
+<li><strong>断点续训</strong>：挂了能无损续跑，不丢步、不丢数据状态；</li>
+<li><strong>收敛判断</strong>：知道“该停了”“该调了”“该回滚了”；</li>
+<li><strong>失败排查</strong>：日志异常能快速归因，而不是重启硬试。</li>
+</ol>
+<p>交付物：一套 checkpoint 目录规范 + 一个训练日志分析脚本 + 一次“断电恢复演练”的完整流程。</p>
+<blockquote>
+<p>一句话记住本章：<strong>训练系统要按“一定会挂、一定会出异常”来设计——checkpoint 是保险，日志是黑匣子，告警是安全带。</strong></p>
+</blockquote>
+<hr />
+<h2 id="02">02 白话原理：一次训练 = 一个“可恢复的状态机”</h2>
+<h3 id="21">2.1 训练状态不止是“模型权重”</h3>
+<p>很多人以为 checkpoint 就是存模型，其实一次训练的运行状态包括：</p>
+<table>
+<thead>
+<tr>
+<th>状态</th>
+<th>作用</th>
+<th>丢了会怎样</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>模型权重</td>
+<td>学到的知识</td>
+<td>回到上次保存点</td>
+</tr>
+<tr>
+<td>优化器状态</td>
+<td>动量/方差</td>
+<td>学习率效果打折、可能不稳定</td>
+</tr>
+<tr>
+<td>学习率调度器</td>
+<td>当前 LR 位置</td>
+<td>退火节奏错乱</td>
+</tr>
+<tr>
+<td>随机数状态</td>
+<td>数据顺序/增强</td>
+<td>数据重复/无法复现</td>
+</tr>
+<tr>
+<td>数据游标</td>
+<td>读到第几个样本/epoch</td>
+<td>样本重复或漏读</td>
+</tr>
+<tr>
+<td>梯度缩放器</td>
+<td>FP16 loss scaling</td>
+<td>FP16 训练数值异常</td>
+</tr>
+</tbody>
+</table>
+<p><strong>“断点续训”= 把以上状态全部恢复，让训练像没中断过一样继续</strong>——只存权重再加载，叫“热启动”，不叫“续训”。</p>
+<h3 id="22">2.2 为什么数据游标和随机状态重要</h3>
+<p>预训练通常小于 1 epoch，且要求数据不重复。如果恢复时从头重读数据，前面读过的样本会被再学一遍，等于悄悄改变了数据配比；如果 shuffle 种子不一致，后续样本顺序全变，实验不可复现。所以<strong>工业级 checkpoint 必须包含数据加载器状态</strong>（或等效的确定性重放方案）。</p>
+<blockquote>
+<p>记住：<strong>checkpoint 的验收标准不是“能加载”，而是“续训后的 loss 曲线与不中断时连续”。</strong></p>
+</blockquote>
+<h2 id="03-checkpoint">03 Checkpoint 设计：目录、频率与保留策略</h2>
+<h3 id="31-checkpoint">3.1 一个规范的 checkpoint 目录</h3>
+<pre><code class="language-text">checkpoints/exp001/
+├── step-000500/
+│   ├── model/                 # 模型权重（HF/Megatron 格式）
+│   ├── optimizer/             # 优化器状态
+│   ├── scheduler.json         # LR 位置
+│   ├── rng_state.pt           # 各卡随机状态
+│   ├── dataloader_state.json  # 数据游标/epoch/样本索引
+│   ├── scaler.pt              # FP16 loss scaler（如使用）
+│   ├── config.json            # 训练配置快照（含 Git commit）
+│   └── metadata.json          # step/loss/时间/完整性校验值
+├── step-001000/
+└── latest/                    # 软链到最新 checkpoint
+</code></pre>
+<p>metadata.json 至少包含：step、global_batch 累计、train loss、LR、保存时间、训练代码 commit、数据版本——<strong>没有元数据的 checkpoint 等于匿名备份</strong>。</p>
+<h3 id="32">3.2 保存频率与保留策略</h3>
+<table>
+<thead>
+<tr>
+<th>项</th>
+<th>建议</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>保存间隔</td>
+<td>按时间（如每 30–60 分钟）+ 按 step（如每 500–2000 步）双触发</td>
+</tr>
+<tr>
+<td>保留份数</td>
+<td>最近 N 份 + 里程碑份（如每 10% 总步数一份）</td>
+</tr>
+<tr>
+<td>异步保存</td>
+<td>保存放后台线程/独立进程，避免阻塞训练</td>
+</tr>
+<tr>
+<td>完整性校验</td>
+<td>保存后立即读回校验（hash/可加载），防“静默损坏”</td>
+</tr>
+<tr>
+<td>存储位置</td>
+<td>与训练机分离（对象存储/NFS），防机器一起挂</td>
+</tr>
+</tbody>
+</table>
+<h3 id="33">3.3 续训的两种模式</h3>
+<table>
+<thead>
+<tr>
+<th>模式</th>
+<th>做法</th>
+<th>适用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>精确续训</td>
+<td>恢复全部状态（推荐）</td>
+<td>长训练、数据不能重读</td>
+</tr>
+<tr>
+<td>热启动</td>
+<td>只加载权重，重新配数据</td>
+<td>换数据/换任务、微调</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>分布式训练（ZeRO/TP/PP）的 checkpoint 还要保存各并行维度的分片与索引，恢复时按同样的并行配置加载——<strong>并行配置变了，旧 checkpoint 往往不能直接续训</strong>（需先转换）。</p>
+</blockquote>
+<hr />
+<h2 id="04">04 收敛判断：什么时候“该停、该调、该回滚”</h2>
+<h3 id="41">4.1 判断收敛的四条曲线</h3>
+<table>
+<thead>
+<tr>
+<th>曲线</th>
+<th>看什么</th>
+<th>异常信号</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>train loss</td>
+<td>拟合进度</td>
+<td>不降/反弹</td>
+</tr>
+<tr>
+<td>val loss（held-out）</td>
+<td>泛化进度</td>
+<td>与 train 拉开=过拟合/背题</td>
+</tr>
+<tr>
+<td>grad norm</td>
+<td>训练健康</td>
+<td>爆炸/消失</td>
+</tr>
+<tr>
+<td>吞吐与 MFU</td>
+<td>效率</td>
+<td>骤降=IO/通信/硬件问题</td>
+</tr>
+</tbody>
+</table>
+<h3 id="42">4.2 三条实战经验</h3>
+<ol>
+<li><strong>先定“预期 loss”再开跑</strong>：用小规模数据外推或同规模历史实验估计目标区间；实际 loss 明显偏离预期，先怀疑数据/配置而不是“多跑跑就好”；</li>
+<li><strong>用评测闸门而非 loss 决定停点</strong>：预训练/CPT 期间周期性跑轻量评测（每 5%–10% 步数），选“评测最优”的 checkpoint，而不是最后一步；</li>
+<li><strong>loss 平台期不等于收敛</strong>：平台可能来自 LR 过低、数据重复、容量不足——先查 grad norm 与数据，再决定加步数还是调参。</li>
+</ol>
+<h3 id="43">4.3 停机决策清单</h3>
+<ul>
+<li>[ ] val loss 连续 N 步不降且 LR 已退火到位？</li>
+<li>[ ] 评测分不再上升或有回退？</li>
+<li>[ ] 继续训练的成本 vs 预期收益还划算？</li>
+<li>[ ] checkpoint 与实验记录已归档？</li>
+</ul>
+<blockquote>
+<p>一句话：<strong>loss 负责“告诉我还在学”，评测负责“告诉我学得值不值”，checkpoint 负责“让我随时可以重来”。</strong></p>
+</blockquote>
+<h2 id="05-30">05 分步实操：日志分析 + 断电恢复演练（30 分钟）</h2>
+<h3 id="step-1-5">Step 1 生成一份“带事故”的样例训练日志（5 分钟）</h3>
+<p>保存 scripts/make_sample_log.py：</p>
+<pre><code class="language-python"># scripts/make_sample_log.py —— 生成含 loss spike 与 NaN 的样例日志
+import json
+import math
+import pathlib
+import random
+
+root = pathlib.Path(__file__).resolve().parent.parent
+log_dir = root / &quot;logs&quot;
+log_dir.mkdir(parents=True, exist_ok=True)
+out_path = log_dir / &quot;sample_train.jsonl&quot;
+
+random.seed(7)
+rows = []
+peak_lr = 3e-4
+for step in range(3001):
+    base = 4.0 * math.exp(-step / 1500.0) + 0.9
+    loss = base + random.gauss(0, 0.02)
+    grad = max(0.1, 1.0 + random.gauss(0, 0.1))
+    if step == 1200:
+        loss = base + 3.0      # 模拟 loss spike
+        grad = 25.0            # 伴随梯度尖峰
+    if step &gt;= 2500:
+        loss = None            # 模拟 NaN（JSON 存 null）
+        grad = None
+    rows.append({
+        &quot;step&quot;: step,
+        &quot;loss&quot;: loss,
+        &quot;grad_norm&quot;: grad,
+        &quot;lr&quot;: peak_lr * (1.0 - step / 3000.0),
+        &quot;tokens_per_s&quot;: 5200 + random.randint(-120, 120),
+    })
+
+with open(out_path, &quot;w&quot;, encoding=&quot;utf-8&quot;) as f:
+    for row in rows:
+        f.write(json.dumps(row, ensure_ascii=False) + &quot;\n&quot;)
+print(&quot;sample log -&gt;&quot;, out_path, &quot;lines:&quot;, len(rows))
+</code></pre>
+<p>运行：</p>
+<pre><code class="language-bash">python scripts/make_sample_log.py
+</code></pre>
+<blockquote>
+<p>真实训练日志请统一输出这种 JSONL 结构（step/loss/grad_norm/lr/tokens_per_s），一个字段一行、机器可读——这是“黑匣子”的最低要求。WandB/TensorBoard 可以照常记录，但 JSONL 永远保留一份原始副本。</p>
+</blockquote>
+<h3 id="step-2-10">Step 2 写日志分析脚本（10 分钟）</h3>
+<p>保存 scripts/analyze_log.py：</p>
+<pre><code class="language-python"># scripts/analyze_log.py —— 训练日志异常检测（简易版）
+import json
+import pathlib
+import statistics
+
+root = pathlib.Path(__file__).resolve().parent.parent
+log_path = root / &quot;logs&quot; / &quot;sample_train.jsonl&quot;
+
+rows = []
+for line in open(log_path, encoding=&quot;utf-8&quot;):
+    rows.append(json.loads(line))
+
+def clean(rows, key):
+    return [r[key] for r in rows if r.get(key) is not None]
+
+# 用前 200 步建立“正常基线”
+base_loss = clean(rows[:200], &quot;loss&quot;)
+base_grad = clean(rows[:200], &quot;grad_norm&quot;)
+loss_mean = statistics.mean(base_loss)
+loss_std = max(statistics.stdev(base_loss), 1e-6)
+grad_mean = statistics.mean(base_grad)
+tps = clean(rows, &quot;tokens_per_s&quot;)
+tps_mean = statistics.mean(tps)
+
+events = []
+for r in rows:
+    step = r[&quot;step&quot;]
+    loss = r.get(&quot;loss&quot;)
+    grad = r.get(&quot;grad_norm&quot;)
+    if loss is None or grad is None:
+        events.append({&quot;step&quot;: step, &quot;type&quot;: &quot;nan_or_missing&quot;, &quot;suggestion&quot;: &quot;查 FP16 loss scaling/数据 NaN/梯度爆炸；回滚到最近健康 checkpoint&quot;})
+        continue
+    if grad &gt; grad_mean * 10:
+        events.append({&quot;step&quot;: step, &quot;type&quot;: &quot;grad_spike&quot;, &quot;suggestion&quot;: &quot;查 grad clip、学习率与数据批次&quot;})
+    if step &gt; 500 and loss &gt; loss_mean + 5 * loss_std:
+        events.append({&quot;step&quot;: step, &quot;type&quot;: &quot;loss_spike&quot;, &quot;suggestion&quot;: &quot;查该 step 数据批次、checkpoint 一致性、精度设置&quot;})
+    if r[&quot;tokens_per_s&quot;] &lt; tps_mean * 0.5:
+        events.append({&quot;step&quot;: step, &quot;type&quot;: &quot;throughput_drop&quot;, &quot;suggestion&quot;: &quot;查数据加载/网络/掉卡/散热&quot;})
+
+# 去重并保持首次出现
+seen = set()
+summary = []
+for ev in events:
+    key = ev[&quot;type&quot;]
+    if key not in seen:
+        seen.add(key)
+        summary.append(ev)
+
+report = {
+    &quot;total_steps&quot;: len(rows),
+    &quot;baseline&quot;: {&quot;loss_mean&quot;: round(loss_mean, 3), &quot;grad_mean&quot;: round(grad_mean, 3), &quot;tps_mean&quot;: round(tps_mean, 1)},
+    &quot;events&quot;: summary,
+}
+out_path = root / &quot;logs&quot; / &quot;analysis_report.json&quot;
+with open(out_path, &quot;w&quot;, encoding=&quot;utf-8&quot;) as f:
+    json.dump(report, f, ensure_ascii=False, indent=2)
+
+print(json.dumps(report, ensure_ascii=False, indent=2))
+</code></pre>
+<h3 id="step-3-5">Step 3 跑分析，看“黑匣子”怎么报事故（5 分钟）</h3>
+<pre><code class="language-bash">python scripts/analyze_log.py
+</code></pre>
+<p>预期输出类似：</p>
+<pre><code class="language-json">{
+  &quot;total_steps&quot;: 3001,
+  &quot;baseline&quot;: {&quot;loss_mean&quot;: 3.9, &quot;grad_mean&quot;: 1.0, &quot;tps_mean&quot;: 5200.0},
+  &quot;events&quot;: [
+    {&quot;step&quot;: 1200, &quot;type&quot;: &quot;loss_spike&quot;, &quot;suggestion&quot;: &quot;查该 step 数据批次、checkpoint 一致性、精度设置&quot;},
+    {&quot;step&quot;: 1200, &quot;type&quot;: &quot;grad_spike&quot;, &quot;suggestion&quot;: &quot;查 grad clip、学习率与数据批次&quot;},
+    {&quot;step&quot;: 2500, &quot;type&quot;: &quot;nan_or_missing&quot;, &quot;suggestion&quot;: &quot;查 FP16 loss scaling/数据 NaN/梯度爆炸；回滚到最近健康 checkpoint&quot;}
+  ]
+}
+</code></pre>
+<p>对照真实场景的排查顺序：<strong>先看 grad_norm（训练健康）→ 再看 loss 曲线（拟合）→ 最后看吞吐（效率）</strong>。样例日志里 step 1200 的 spike 与 step 2500 的 NaN 都能被自动抓住。</p>
+<h3 id="step-4-10">Step 4 断电恢复演练（10 分钟，核心动作）</h3>
+<ol>
+<li>用一个真实训练（或第 11 章 CPT）配置每 500 步存一次 checkpoint；</li>
+<li>跑到 step 2000 左右，直接 kill 训练进程（模拟断电/掉卡）；</li>
+<li>从最近 checkpoint 续训：</li>
+</ol>
+<pre><code class="language-text"># Hugging Face Trainer 风格（在训练脚本里指定）：
+trainer.train(resume_from_checkpoint=&quot;checkpoints/exp001/step-001000&quot;)
+
+# Megatron/DeepSpeed 风格：启动参数加
+--resume-from-checkpoint checkpoints/exp001/step-001000
+</code></pre>
+<ol start="4">
+<li><strong>验收续训质量</strong>：续训后第 1 个 step 的 loss 应与中断前日志基本连续（误差 &lt;5% 量级）；global step 从 1000 继续，而不是从 0 重来；数据游标不回退（用日志里的样本序号验证）；</li>
+<li>把演练结果写进 docs/training_runbook.md（中断时间、恢复方式、loss 连续性数据），并打版本：</li>
+</ol>
+<pre><code class="language-bash">cd llm-demo
+git add logs scripts docs
+git commit -m &quot;ops: log analyzer v0.1 + resume drill runbook&quot;
+git tag training-ops-v0.1
+</code></pre>
+<blockquote>
+<p>生产要求：把“断电恢复演练”做成每月例行演练，像消防演习一样——<strong>真出事那天，大家才知道流程好不好用</strong>。</p>
+</blockquote>
+<h2 id="06">06 参数详解：稳定性配置速查</h2>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>参考取值</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>保存间隔</td>
+<td>30–60 分钟 或 500–2000 步</td>
+<td>双触发：时间兜底 + 步数精确</td>
+</tr>
+<tr>
+<td>保留份数</td>
+<td>最近 5–10 份 + 里程碑份</td>
+<td>磁盘有限时优先保“最近+里程碑”</td>
+</tr>
+<tr>
+<td>异步保存</td>
+<td>开</td>
+<td>避免保存阻塞训练（注意磁盘 IO 峰值）</td>
+</tr>
+<tr>
+<td>异常检测窗口</td>
+<td>100–500 步</td>
+<td>太小误报多，太大发现慢</td>
+</tr>
+<tr>
+<td>grad spike 倍数</td>
+<td>&gt;基线 10 倍</td>
+<td>与 grad clip 阈值配合</td>
+</tr>
+<tr>
+<td>loss spike 倍数</td>
+<td>&gt;滚动均值 3–5 倍标准差</td>
+<td>需排除退火期的正常上升</td>
+</tr>
+<tr>
+<td>val loss 早停</td>
+<td>连续 N 个评估点不降（N=5–20）</td>
+<td>配合评测闸门使用</td>
+</tr>
+<tr>
+<td>checkpoint 校验</td>
+<td>保存后立即读回</td>
+<td>hash + 可加载双检查</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>阈值要“按你的实验噪声”标定：先跑 500 步健康训练，统计 loss/grad 的波动分布，再定告警线——不要直接抄别人的数值。</p>
+</blockquote>
+<hr />
+<h2 id="07">07 高频踩坑排查</h2>
+<p><strong>坑 1：只存模型不存优化器</strong>
+症状：续训后 loss 曲线断层、收敛变慢。
+解法：checkpoint 必须含模型+优化器+调度器+RNG+数据游标（第 02 节状态表全都要）。</p>
+<p><strong>坑 2：checkpoint 写一半被 kill 损坏</strong>
+症状：恢复时报文件不完整/加载失败。
+解法：先写临时目录再原子 rename；保存后立即读回校验；latest 用软链指向最近完整版本。</p>
+<p><strong>坑 3：NaN 出现后没有自动停</strong>
+症状：NaN 之后又跑了几千步，日志被污染，只能回滚更远。
+解法：监控到 NaN/Inf 立即暂停训练并告警，自动回滚到最近健康 checkpoint；不要“再跑跑看”。</p>
+<p><strong>坑 4：loss spike 当成随机波动忽略</strong>
+症状：spike 后 loss 自己恢复了，但同批次毒数据还在数据池里，下次还会炸。
+解法：spike 要定位到“具体数据批次”，把该批次抽出检查（坏样本、错位、重复）；只重启不查因=治标不治本。</p>
+<p><strong>坑 5：吞吐骤降不查硬件</strong>
+症状：训练越来越慢，以为是数据问题，其实是散热降频或某卡掉线。
+解法：监控每卡利用率/温度/NCCL 错误；tokens/s 骤降先看硬件面板再看日志。</p>
+<p><strong>坑 6：续训后数据重复读</strong>
+症状：恢复后样本序号从头开始，等于悄悄改了数据配比。
+解法：保存并恢复 dataloader 状态；或用“确定性分片+step 推导样本位置”的方案。</p>
+<p><strong>坑 7：只在最后存一个 checkpoint</strong>
+症状：最后一步恰好是 loss spike 后的坏模型，白训一场。
+解法：按保存策略留多份；用评测选最优 checkpoint，而不是默认用最后一个。</p>
+<hr />
+<h2 id="08">08 进阶优化：训练稳定性的进化方向</h2>
+<p><strong>① 异步保存 + 快照</strong>：保存放独立线程/进程，配合文件系统快照，训练几乎无感；超大模型用“分片并行保存”缩短保存时间。</p>
+<p><strong>② 自动恢复（Self-Healing）</strong>：检测到节点故障后自动重新调度、从最近 checkpoint 续训并通知负责人；云平台/编排系统原生支持时优先用平台的。</p>
+<p><strong>③ Loss 预测与偏差告警</strong>：用小规模外推建立“预期 loss 走廊”，实际 loss 连续偏离走廊即告警——比“spike 后才发现”早几小时。</p>
+<p><strong>④ 健康检查四件套</strong>：心跳（进程活着）、吞吐（&gt;阈值）、数值（无 NaN）、进度（step 前进）；四件套任一异常自动触发预案。</p>
+<p><strong>⑤ 事故复盘库</strong>：每次训练事故记录“症状→日志特征→根因→修复→预防”，沉淀成 team runbook；下次同类事故 10 分钟内定位，而不是重新排查一遍。</p>
+<hr />
+<h2 id="09-top3">09 本章核心总结（TOP3）</h2>
+<p><strong>TOP1</strong>：断点续训 = 恢复“模型+优化器+调度器+RNG+数据游标”全套状态；checkpoint 要原子写入、保留多份、保存后校验，验收标准是“续训 loss 曲线连续”。</p>
+<p><strong>TOP2</strong>：收敛判断用四条曲线（train loss/val loss/grad norm/吞吐）+ 评测闸门；loss 负责“在学”，评测负责“学得值不值”，平台期先查数据与梯度再决定是否加步数。</p>
+<p><strong>TOP3</strong>：训练日志要结构化（JSONL）并可自动分析：NaN 自动停、grad/loss spike 定位到批次、吞吐骤降查硬件；每月做一次断电恢复演练，把“翻车”变成可执行流程。</p>
+<hr />
+<h2 id="10">10 连载衔接</h2>
+<p>上一章（第 12 章）解决了“怎么算账、怎么选参”；本章补齐了“挂了怎么救、好了怎么停、坏了怎么查”——至此，预训练工程·数据核心层 11 章全部收官，主线工程拥有了从数据到稳定训练的完整地基。</p>
+<p>下一章进入全新阶段：【第 14 章】全维度微调技术拆解：全参/LoRA/QLoRA/适配器怎么选。模型能力层的大幕正式拉开。</p>
+<hr />
+<h2 id="11">11 话题标签与系列目录索引</h2>
+<p>话题标签：<strong>#LLM全栈工程 #断点续训 #训练日志 #Checkpoint #训练稳定性 #工程实战</strong>（Voice前沿 出品，欢迎收藏追更）</p>
+<p><strong>系列目录（46 章，随连载持续更新）</strong></p>
+<p>第 0 阶段·开篇引路
+- 01 一条大模型生产线全程发生了什么
+- 02 2 小时跑通最小闭环
+- 03 预训练到底在练什么</p>
+<p>第 1 阶段·预训练工程·数据核心层
+- 04 数据管道从零构建
+- 05 数据清洗规范与脏数据剔除
+- 06 文本过滤实战
+- 07 数据去重算法
+- 08 敏感数据脱敏
+- 09 数据质量打分体系
+- 10 领域专属数据构建
+- 11 增量预训练方案
+- 12 预训练超参选型与硬件适配
+- 13 断点续训、收敛判断与失败排查（本篇）</p>
+<p>第 2 阶段·微调与对齐体系
+- 14 全维度微调技术拆解
+- 15 SFT 监督微调实战
+- 16 SFT 数据集构建与标注规范
+- 17 微调模板设计
+- 18 微调超参调优策略
+- 19 过拟合、欠拟合与灾难遗忘
+- 20 微调效果评估体系
+- 21 多轮对话微调专项
+- 22 模型蒸馏实战
+- 23 奖励模型训练
+- 24 RLHF/PPO 工程落地
+- 25 RLAIF：AI 反馈自动对齐
+- 26 小样本与领域自适应微调</p>
+<p>第 3 阶段·基础部署与推理优化
+- 27 部署框架横向对比
+- 28 vLLM 部署实战与参数调优
+- 29 SGLang 高性能推理落地
+- 30 TensorRT-LLM 固化与加速
+- 31 模型量化实操
+- 32 模型剪枝与蒸馏压缩
+- 33 KV Cache 优化与上下文窗口拓展
+- 34 流式推理封装与高并发服务化</p>
+<p>第 4 阶段·高阶推理编译器极致优化
+- 35 推理编译器核心原理
+- 36 算子融合与计算图编译
+- 37 动态 shape 与显存编译器优化
+- 38 Speculative Decoding 投机推理进阶
+- 39 批量调度与并行深度适配
+- 40 内核重构与编译级量化</p>
+<p>第 5 阶段·全栈工程联调与项目落地
+- 41 全链路串联：数据到上线一体化流程
+- 42 领域大模型定制化落地
+- 43 高并发生产适配与端侧部署
+- 44 模型迭代升级与性能对标评测
+- 45 线上问题闭环排查
+- 46 工程化最佳实践汇总（手册终章）</p>
+<hr />
+<p><em>本文由 Voice前沿 出品 · 转载注明出处 · 下一篇：第 14 章 全维度微调技术拆解</em></p>
+</article>
+<nav class="prevnext"><a href="ch12.html">← 第 12 章 【LLM全栈工程·第12章】预训练超参选型与硬件适配：把每一分算力花在刀刃上</a><a href="ch14.html" style="text-align:right">第 14 章 【LLM全栈工程·第14章】全维度微调技术拆解：全参/LoRA/QLoRA/适配器怎么选 →</a></nav>
+</main>
+<footer class="wrap"><p>LLM 全栈工程 · Voice前沿 出品 · 46 章连载 · 收藏即手册</p></footer>
+</body>
+</html>

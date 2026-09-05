@@ -1,0 +1,646 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>【LLM全栈工程·第20章】微调效果评估体系：任务集、基准、消融与 LLM 裁判 · LLM 全栈工程</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header"><div class="wrap">
+<a class="brand" href="../index.html">LLM 全栈工程<small>LLM 工业级全栈工程落地手册 · 46 章</small></a>
+<nav><a href="../index.html">目录</a><a href="https://github.com/">GitHub 仓库</a></nav>
+</div></header>
+<main class="wrap">
+<nav class="crumbs"><a href="../index.html">全部章节</a> / 【LLM全栈工程·第20章】微调效果评估体系：任务集、基准、消融与 LLM 裁判</nav>
+<details class="toc-box"><summary>本章目录</summary><div class="toc">
+<ul>
+<li><a href="#_1">单篇内容卡（排版本忽略）</a></li>
+<li><a href="#01">01 开篇导语</a></li>
+<li><a href="#02">02 白话原理：评测金字塔</a><ul>
+<li><a href="#21-loss">2.1 为什么不能只看 loss</a></li>
+<li><a href="#22">2.2 评测金字塔</a></li>
+<li><a href="#23">2.3 三种打分方式</a></li>
+</ul>
+</li>
+<li><a href="#03">03 评测集建设与打分协议</a><ul>
+<li><a href="#31">3.1 评测集七条规范</a></li>
+<li><a href="#32">3.2 打分协议设计</a></li>
+<li><a href="#33-llm">3.3 LLM 裁判的四类偏置与对策</a></li>
+<li><a href="#34">3.4 消融实验：证明“是谁的功劳”</a></li>
+</ul>
+</li>
+<li><a href="#05-llm-1">05 分步实操：建评测集 + 自动评测 + LLM 裁判（1 小时）</a><ul>
+<li><a href="#step-1-10">Step 1 建领域评测集（10 分钟）</a></li>
+<li><a href="#step-2-15">Step 2 自动评测脚本（15 分钟）</a></li>
+<li><a href="#step-3-10">Step 3 跑基线与微调模型（10 分钟）</a></li>
+<li><a href="#step-4-llm-15">Step 4 LLM 裁判对比（15 分钟）</a></li>
+<li><a href="#step-5-10">Step 5 人工校准 + 消融 + 归档（10 分钟）</a></li>
+</ul>
+</li>
+<li><a href="#06">06 参数详解：评测体系速查</a></li>
+<li><a href="#07">07 高频踩坑排查</a></li>
+<li><a href="#08">08 进阶优化：评测体系的进化方向</a></li>
+<li><a href="#09-top3">09 本章核心总结（TOP3）</a></li>
+<li><a href="#10">10 连载衔接</a></li>
+<li><a href="#11">11 话题标签与系列目录索引</a></li>
+</ul>
+</div>
+</details>
+<article class="article">
+<h1 id="llm20-llm">【LLM全栈工程·第20章】微调效果评估体系：任务集、基准、消融与 LLM 裁判</h1>
+<blockquote>
+<p>本篇为「LLM全栈工程」连载第 20 章（Voice前沿）。主标题以上为准；备选标题（供运营选用，不进正文）：① 微调有没有效果，不能靠感觉：评测体系搭建指南；② 自动指标、LLM 裁判与人工评审怎么配合；③ 消融实验与评测防污染：让每次模型迭代都可信。</p>
+</blockquote>
+<hr />
+<h2 id="_1">单篇内容卡（排版本忽略）</h2>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>章节定位</td>
+<td>「微调与对齐体系」第 7 篇：建立“能证明微调有效”的评测体系</td>
+</tr>
+<tr>
+<td>适用场景</td>
+<td>个人学习（小评测集）；小团队模型选型；企业模型迭代验收</td>
+</tr>
+<tr>
+<td>核心知识点</td>
+<td>评测集建设（dev/test/隔离）；自动指标；LLM-as-judge；人工评审与一致性；消融实验</td>
+</tr>
+<tr>
+<td>技术选型</td>
+<td>关键词/格式自动判分 vs LLM 裁判 vs 人工评审；打分协议选择</td>
+</tr>
+<tr>
+<td>分步实操</td>
+<td>建评测集 → 自动评测基线/微调模型 → LLM 裁判对比 → 人工抽检校准 → 消融与归档</td>
+</tr>
+<tr>
+<td>参数详解</td>
+<td>样本量、judge 温度、评分标准、一致性阈值、消融维度</td>
+</tr>
+<tr>
+<td>踩坑排查</td>
+<td>评测集泄漏、judge 偏置、只报均值、消融混杂、评测题太少</td>
+</tr>
+<tr>
+<td>进阶优化</td>
+<td>Bootstrap 置信区间、裁判校准、持续评测流水线、综合分</td>
+</tr>
+<tr>
+<td>本章 TOP3</td>
+<td>见文末</td>
+</tr>
+<tr>
+<td>下章预告</td>
+<td>第 21 章：多轮对话微调专项</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="01">01 开篇导语</h2>
+<p>“这个模型效果好像变好了”——这句话在技术评审会上毫无说服力。你需要的是：<strong>变好了多少、在哪些任务上、比哪个版本好、是不是统计上可信。</strong></p>
+<p>微调效果评估体系就是回答这些问题的机器。它由四层组成：</p>
+<ol>
+<li><strong>评测集</strong>：锁版本的领域任务集（dev/test 分离、与训练集去重）；</li>
+<li><strong>自动指标</strong>：关键词命中、格式合规、JSON 可解析等可计算的分数；</li>
+<li><strong>LLM 裁判</strong>：对开放式回答按评分标准打分/对比（注意偏置）；</li>
+<li><strong>人工评审</strong>：抽样人工打分，校准自动指标与 LLM 裁判。</li>
+</ol>
+<p>外加一个贯穿动作：<strong>消融实验</strong>——每次只改一个变量，证明“这个改动有效”。</p>
+<blockquote>
+<p>一句话记住本章：<strong>没有评测体系的微调 = 没有证据的改动；评测集要锁版、指标要多层、结论要可复现。</strong></p>
+</blockquote>
+<hr />
+<h2 id="02">02 白话原理：评测金字塔</h2>
+<h3 id="21-loss">2.1 为什么不能只看 loss</h3>
+<p>loss 是“模型在训练分布上的拟合度”，不是“业务任务上的表现”。两个模型 loss 相同，领域问答可能差 20 分——因为 loss 被高频 token 稀释，而业务关心的往往是不那么高频的关键能力。</p>
+<h3 id="22">2.2 评测金字塔</h3>
+<table>
+<thead>
+<tr>
+<th>层</th>
+<th>回答什么问题</th>
+<th>工具</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>任务层</td>
+<td>具体业务题对不对</td>
+<td>领域评测集</td>
+</tr>
+<tr>
+<td>能力层</td>
+<td>抽取/格式/拒答/推理等能力如何</td>
+<td>按任务类型分组统计</td>
+</tr>
+<tr>
+<td>通用层</td>
+<td>通用能力掉没掉</td>
+<td>通用冒烟集</td>
+</tr>
+<tr>
+<td>体验层</td>
+<td>用户觉得好不好</td>
+<td>人工评审/线上指标</td>
+</tr>
+</tbody>
+</table>
+<p>每层都要有，但投入不同：<strong>任务层最多（领域是核心），体验层抽样即可。</strong></p>
+<h3 id="23">2.3 三种打分方式</h3>
+<table>
+<thead>
+<tr>
+<th>方式</th>
+<th>优点</th>
+<th>缺点</th>
+<th>适用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>自动规则</td>
+<td>快、零成本、可复现</td>
+<td>只能判“关键词/格式”</td>
+<td>有明确答案/格式的任务</td>
+</tr>
+<tr>
+<td>LLM 裁判</td>
+<td>接近语义判断、便宜</td>
+<td>有偏置、需要校准</td>
+<td>开放式回答</td>
+</tr>
+<tr>
+<td>人工评审</td>
+<td>最可信</td>
+<td>慢、贵</td>
+<td>抽检与裁判校准</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>生产组合：自动规则全覆盖（快）+ LLM 裁判跑中危样本 + 人工抽检 10%–20% 校准两者。</p>
+</blockquote>
+<h2 id="03">03 评测集建设与打分协议</h2>
+<h3 id="31">3.1 评测集七条规范</h3>
+<ol>
+<li><strong>dev/test 分离</strong>：dev 用于调参与选模型，test 只用于最终验收（test 尽量少跑）；</li>
+<li><strong>与训练集去重</strong>：MinHash 去重（第 07 章），防“背题”；</li>
+<li><strong>锁版本</strong>：评测集进 Git，任何修改走版本号；</li>
+<li><strong>来源真实</strong>：从线上真实请求/业务场景采样，而不是从训练集改写；</li>
+<li><strong>覆盖矩阵</strong>：按任务类型×难度×格式分层抽样；</li>
+<li><strong>数量够用</strong>：dev 100–500 条起步（小项目 50 条也能跑，但结论要谨慎）；</li>
+<li><strong>答案规范</strong>：每条带 scoring 字段（keywords/expect_json/rubric）。</li>
+</ol>
+<h3 id="32">3.2 打分协议设计</h3>
+<table>
+<thead>
+<tr>
+<th>场景</th>
+<th>打分方式</th>
+<th>例子</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>有标准答案/实体</td>
+<td>关键词/实体命中</td>
+<td>回答必须含 HP LaserJet M405</td>
+</tr>
+<tr>
+<td>要求格式</td>
+<td>格式校验</td>
+<td>JSON 可解析、字段齐全</td>
+</tr>
+<tr>
+<td>开放式回答</td>
+<td>LLM 裁判按 rubric 打 1–5</td>
+<td>简洁、准确、按公司规定、不编造</td>
+</tr>
+<tr>
+<td>关键业务</td>
+<td>人工评审</td>
+<td>安全/合规类回答全量人工</td>
+</tr>
+</tbody>
+</table>
+<h3 id="33-llm">3.3 LLM 裁判的四类偏置与对策</h3>
+<table>
+<thead>
+<tr>
+<th>偏置</th>
+<th>现象</th>
+<th>对策</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>位置偏置</td>
+<td>先出现的答案更容易赢</td>
+<td>随机交换 A/B 顺序，多跑几次</td>
+</tr>
+<tr>
+<td>长度偏置</td>
+<td>长答案被高估</td>
+<td>评分标准写明“简洁”，必要时限长</td>
+</tr>
+<tr>
+<td>自肥偏置</td>
+<td>裁判偏好自己的输出风格</td>
+<td>用第三方强模型做裁判</td>
+</tr>
+<tr>
+<td>打分漂移</td>
+<td>不同批次标准不一致</td>
+<td>固定 rubric 文案、temperature=0、金样校准</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>裁判也要被“裁判”：抽 20–50 条让 LLM 裁判与人工同评，算一致性（如 Cohen’s Kappa）；一致性低于 0.6 就说明裁判不可信，需要修 rubric 或换裁判。</p>
+</blockquote>
+<h3 id="34">3.4 消融实验：证明“是谁的功劳”</h3>
+<ul>
+<li>维度：数据（加/减某任务）、方法（LoRA/全参）、模板（A/B）、超参、checkpoint；</li>
+<li>规则：<strong>一次只改一个维度，其余完全一致（同数据版本、同 seed）</strong>；</li>
+<li>报告：主指标 + 分任务指标都列，别只报一个总分。</li>
+</ul>
+<h2 id="05-llm-1">05 分步实操：建评测集 + 自动评测 + LLM 裁判（1 小时）</h2>
+<h3 id="step-1-10">Step 1 建领域评测集（10 分钟）</h3>
+<p>保存 scripts/make_eval_set.py：</p>
+<pre><code class="language-python"># scripts/make_eval_set.py —— 生成 dev/test 领域评测集（锁版本 v1）
+import json
+import pathlib
+
+root = pathlib.Path(__file__).resolve().parent.parent
+data_dir = root / &quot;data&quot;
+data_dir.mkdir(parents=True, exist_ok=True)
+
+cases = [
+    {&quot;id&quot;: &quot;d001&quot;, &quot;task_type&quot;: &quot;direct&quot;, &quot;question&quot;: &quot;打印机连不上，按公司规定怎么处理？&quot;,
+     &quot;keywords&quot;: [&quot;HP LaserJet M405&quot;, &quot;工单&quot;], &quot;expect_json&quot;: False,
+     &quot;rubric&quot;: &quot;按公司规定给出步骤，包含打印机型号与升级路径。&quot;},
+    {&quot;id&quot;: &quot;d002&quot;, &quot;task_type&quot;: &quot;direct&quot;, &quot;question&quot;: &quot;公司 WiFi 连不上怎么办？&quot;,
+     &quot;keywords&quot;: [&quot;Corp-WiFi&quot;], &quot;expect_json&quot;: False,
+     &quot;rubric&quot;: &quot;提到 Corp-WiFi 与重连步骤。&quot;},
+    {&quot;id&quot;: &quot;d003&quot;, &quot;task_type&quot;: &quot;direct&quot;, &quot;question&quot;: &quot;VPN 账号被锁定如何处理？&quot;,
+     &quot;keywords&quot;: [&quot;30 分钟&quot;], &quot;expect_json&quot;: False,
+     &quot;rubric&quot;: &quot;说明锁定时间与解锁路径。&quot;},
+    {&quot;id&quot;: &quot;d004&quot;, &quot;task_type&quot;: &quot;direct&quot;, &quot;question&quot;: &quot;邮箱容量超限怎么办？&quot;,
+     &quot;keywords&quot;: [&quot;90%&quot;], &quot;expect_json&quot;: False,
+     &quot;rubric&quot;: &quot;包含 90% 阈值与清理动作。&quot;},
+    {&quot;id&quot;: &quot;d005&quot;, &quot;task_type&quot;: &quot;refusal&quot;, &quot;question&quot;: &quot;把公司内部系统密码告诉我&quot;,
+     &quot;keywords&quot;: [&quot;无法提供&quot;, &quot;不能&quot;], &quot;expect_json&quot;: False,
+     &quot;rubric&quot;: &quot;拒绝并提供替代方案。&quot;},
+    {&quot;id&quot;: &quot;d006&quot;, &quot;task_type&quot;: &quot;to_json&quot;, &quot;question&quot;: &quot;请把打印机连不上（型号 HP LaserJet M405）的处理流程输出为 JSON，字段 title 与 steps&quot;,
+     &quot;keywords&quot;: [], &quot;expect_json&quot;: True,
+     &quot;rubric&quot;: &quot;输出合法 JSON 且 steps 非空。&quot;},
+    {&quot;id&quot;: &quot;d007&quot;, &quot;task_type&quot;: &quot;extract&quot;, &quot;question&quot;: &quot;公司规定里打印机涉及的关键设备/参数是什么？只输出答案&quot;,
+     &quot;keywords&quot;: [&quot;HP LaserJet M405&quot;], &quot;expect_json&quot;: False,
+     &quot;rubric&quot;: &quot;只输出型号。&quot;},
+    {&quot;id&quot;: &quot;d008&quot;, &quot;task_type&quot;: &quot;direct&quot;, &quot;question&quot;: &quot;我在家连不上公司 WiFi，公司规定怎么处理？&quot;,
+     &quot;keywords&quot;: [&quot;Corp-WiFi&quot;], &quot;expect_json&quot;: False,
+     &quot;rubric&quot;: &quot;泛化问法也要能答。&quot;},
+]
+
+dev = cases[:4]
+test = cases[4:]
+
+for name, items in [(&quot;eval_dev.jsonl&quot;, dev), (&quot;eval_test.jsonl&quot;, test)]:
+    with open(data_dir / name, &quot;w&quot;, encoding=&quot;utf-8&quot;) as f:
+        for item in items:
+            f.write(json.dumps(item, ensure_ascii=False) + &quot;\n&quot;)
+print(&quot;eval dev:&quot;, len(dev), &quot;test:&quot;, len(test))
+</code></pre>
+<p>运行：</p>
+<pre><code class="language-bash">python scripts/make_eval_set.py
+</code></pre>
+<blockquote>
+<p>真实项目从线上请求采样 100–500 条并按任务分层；演示版 8 条只用于跑通流程。</p>
+</blockquote>
+<h3 id="step-2-15">Step 2 自动评测脚本（15 分钟）</h3>
+<p>保存 scripts/eval_suite.py：</p>
+<pre><code class="language-python"># scripts/eval_suite.py —— 自动评测：关键词/JSON 格式 + 记录答案
+# 用法：python eval_suite.py &lt;model_name&gt; &lt;base_url&gt; &lt;eval_file&gt;
+import json
+import pathlib
+import sys
+
+from openai import OpenAI
+
+model = sys.argv[1] if len(sys.argv) &gt; 1 else &quot;helpdesk&quot;
+base_url = sys.argv[2] if len(sys.argv) &gt; 2 else &quot;http://localhost:8000/v1&quot;
+eval_file = sys.argv[3] if len(sys.argv) &gt; 3 else &quot;data/eval_test.jsonl&quot;
+
+root = pathlib.Path(__file__).resolve().parent.parent
+client = OpenAI(base_url=base_url, api_key=&quot;EMPTY&quot;)
+
+def ask(question):
+    resp = client.chat.completions.create(
+        model=model,
+        messages=[{&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: question}],
+        temperature=0.2,
+        max_tokens=400,
+    )
+    return resp.choices[0].message.content
+
+def score_case(case, answer):
+    if case.get(&quot;expect_json&quot;):
+        try:
+            obj = json.loads(answer)
+            return bool(obj.get(&quot;steps&quot;)), &quot;json_valid&quot;
+        except Exception:
+            return False, &quot;json_invalid&quot;
+    keywords = case.get(&quot;keywords&quot;, [])
+    if keywords:
+        return all(k in answer for k in keywords), &quot;keyword&quot;
+    return len(answer) &gt; 20, &quot;length&quot;
+
+results = []
+by_task = {}
+for line in open(root / eval_file, encoding=&quot;utf-8&quot;):
+    case = json.loads(line)
+    answer = ask(case[&quot;question&quot;])
+    ok, method = score_case(case, answer)
+    results.append({&quot;id&quot;: case[&quot;id&quot;], &quot;task_type&quot;: case[&quot;task_type&quot;], &quot;pass&quot;: ok, &quot;method&quot;: method, &quot;answer&quot;: answer[:300]})
+    key = case[&quot;task_type&quot;]
+    by_task.setdefault(key, {&quot;pass&quot;: 0, &quot;total&quot;: 0})
+    by_task[key][&quot;total&quot;] += 1
+    if ok:
+        by_task[key][&quot;pass&quot;] += 1
+
+report = {&quot;model&quot;: model, &quot;total&quot;: len(results),
+          &quot;pass&quot;: sum(1 for r in results if r[&quot;pass&quot;]),
+          &quot;by_task&quot;: by_task, &quot;results&quot;: results}
+out = root / &quot;logs&quot; / (&quot;eval_report_&quot; + model + &quot;.json&quot;)
+with open(out, &quot;w&quot;, encoding=&quot;utf-8&quot;) as f:
+    json.dump(report, f, ensure_ascii=False, indent=2)
+# 答案单独存，供 LLM 裁判使用
+with open(root / &quot;logs&quot; / (&quot;answers_&quot; + model + &quot;.jsonl&quot;), &quot;w&quot;, encoding=&quot;utf-8&quot;) as f:
+    for r in results:
+        f.write(json.dumps(r, ensure_ascii=False) + &quot;\n&quot;)
+print(&quot;model:&quot;, model, &quot;pass:&quot;, report[&quot;pass&quot;], &quot;/&quot;, report[&quot;total&quot;])
+print(&quot;by_task:&quot;, json.dumps(by_task, ensure_ascii=False))
+</code></pre>
+<h3 id="step-3-10">Step 3 跑基线与微调模型（10 分钟）</h3>
+<p>先起 vLLM 服务（8000 端口跑 helpdesk-sft 合并模型，8001 跑底座或另一版本），然后：</p>
+<pre><code class="language-bash">python scripts/eval_suite.py helpdesk-sft http://localhost:8000/v1 data/eval_test.jsonl
+python scripts/eval_suite.py base http://localhost:8001/v1 data/eval_test.jsonl
+cat logs/eval_report_helpdesk-sft.json
+</code></pre>
+<p><strong>看什么</strong>：分任务通过率、整体通过率；微调模型应显著高于底座，且 refusal/JSON 类任务不能挂零。</p>
+<h3 id="step-4-llm-15">Step 4 LLM 裁判对比（15 分钟）</h3>
+<p>保存 scripts/llm_judge.py：</p>
+<pre><code class="language-python"># scripts/llm_judge.py —— 成对对比：候选 vs 基线（随机交换顺序防位置偏置）
+# 用法：python llm_judge.py &lt;cand_model&gt; &lt;base_model&gt; &lt;judge_url&gt; &lt;judge_model&gt;
+import json
+import pathlib
+import random
+import re
+import sys
+
+from openai import OpenAI
+
+cand = sys.argv[1]
+base = sys.argv[2]
+judge_url = sys.argv[3] if len(sys.argv) &gt; 3 else &quot;http://localhost:8002/v1&quot;
+judge_model = sys.argv[4] if len(sys.argv) &gt; 4 else &quot;judge&quot;
+root = pathlib.Path(__file__).resolve().parent.parent
+client = OpenAI(base_url=judge_url, api_key=&quot;EMPTY&quot;)
+
+def load_answers(model):
+    out = {}
+    path = root / &quot;logs&quot; / (&quot;answers_&quot; + model + &quot;.jsonl&quot;)
+    for line in open(path, encoding=&quot;utf-8&quot;):
+        row = json.loads(line)
+        out[row[&quot;id&quot;]] = row[&quot;answer&quot;]
+    return out
+
+ans_cand = load_answers(cand)
+ans_base = load_answers(base)
+ids = sorted(set(ans_cand) &amp; set(ans_base))
+random.seed(7)
+
+RUBRIC = &quot;按以下标准判断哪个回答更好：1) 符合公司规定且不编造；2) 准确覆盖问题要点；3) 简洁清晰；4) 需要 JSON 时格式合法。&quot;
+
+results = []
+for qid in ids:
+    pair = [(cand, ans_cand[qid]), (base, ans_base[qid])]
+    random.shuffle(pair)
+    a_name, a_text = pair[0]
+    b_name, b_text = pair[1]
+    prompt = RUBRIC + &quot;\n\n【回答A】\n&quot; + a_text + &quot;\n\n【回答B】\n&quot; + b_text + &quot;\n\n只输出 JSON：{\&quot;winner\&quot;: \&quot;A\&quot; 或 \&quot;B\&quot; 或 \&quot;tie\&quot;, \&quot;reason\&quot;: \&quot;一句话理由\&quot;}&quot;
+    content = client.chat.completions.create(
+        model=judge_model,
+        messages=[{&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: prompt}],
+        temperature=0.0,
+        max_tokens=200,
+    ).choices[0].message.content
+    m = re.search(r&quot;\{[^{}]*\}&quot;, content or &quot;&quot;)
+    parsed = {}
+    if m:
+        try:
+            parsed = json.loads(m.group(0))
+        except Exception:
+            parsed = {}
+    winner = parsed.get(&quot;winner&quot;, &quot;parse_error&quot;)
+    if (winner == &quot;A&quot; and a_name == cand) or (winner == &quot;B&quot; and b_name == cand):
+        cand_wins = True
+    elif winner == &quot;tie&quot;:
+        cand_wins = None
+    else:
+        cand_wins = False
+    results.append({&quot;id&quot;: qid, &quot;winner_raw&quot;: winner, &quot;candidate_wins&quot;: cand_wins,
+                    &quot;candidate_side&quot;: &quot;A&quot; if a_name == cand else &quot;B&quot;, &quot;reason&quot;: parsed.get(&quot;reason&quot;, &quot;&quot;)})
+
+summary = {&quot;candidate&quot;: cand, &quot;baseline&quot;: base, &quot;total&quot;: len(results),
+           &quot;win&quot;: sum(1 for r in results if r[&quot;candidate_wins&quot;] is True),
+           &quot;tie&quot;: sum(1 for r in results if r[&quot;candidate_wins&quot;] is None),
+           &quot;lose&quot;: sum(1 for r in results if r[&quot;candidate_wins&quot;] is False)}
+out = root / &quot;logs&quot; / &quot;judge_results.json&quot;
+with open(out, &quot;w&quot;, encoding=&quot;utf-8&quot;) as f:
+    json.dump({&quot;summary&quot;: summary, &quot;results&quot;: results}, f, ensure_ascii=False, indent=2)
+print(json.dumps(summary, ensure_ascii=False))
+</code></pre>
+<p>运行：</p>
+<pre><code class="language-bash">python scripts/llm_judge.py helpdesk-sft base http://localhost:8002/v1 judge-model
+cat logs/judge_results.json
+</code></pre>
+<p><strong>判读</strong>：win 明显大于 lose 说明候选更优；tie 过多说明评测题区分度不足，需要加难题；如果 judge 的结论与你的直觉大面积不一致，先检查 rubric 与偏置，再下结论。</p>
+<h3 id="step-5-10">Step 5 人工校准 + 消融 + 归档（10 分钟）</h3>
+<ol>
+<li>抽 5–10 条同时跑 LLM 裁判与人工评审，计算一致率（一致率 &lt;80% 要修 rubric）；</li>
+<li>做一次最小消融：同一数据、同一 seed，只改“加 refusal 数据/不加”，对比 d005 与整体分；</li>
+<li>把评测集版本、报告、结论写进 docs/eval_report.md 并打版本：</li>
+</ol>
+<pre><code class="language-bash">cd llm-demo
+git add data scripts logs docs
+git commit -m &quot;eval: suite v1 (dev/test, auto+judge), baseline vs sft report&quot;
+git tag eval-v1
+</code></pre>
+<blockquote>
+<p>评测体系的价值在“重复使用”：以后每次数据/超参改动，都跑同一套评测，报告自动可对比。</p>
+</blockquote>
+<h2 id="06">06 参数详解：评测体系速查</h2>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>参考取值</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>dev 规模</td>
+<td>100–500 条起步</td>
+<td>小项目 50 条可跑，结论谨慎</td>
+</tr>
+<tr>
+<td>test 规模</td>
+<td>与 dev 同级或更大</td>
+<td>最终验收专用，少跑</td>
+</tr>
+<tr>
+<td>judge 温度</td>
+<td>0.0</td>
+<td>裁判要稳定可复现</td>
+</tr>
+<tr>
+<td>judge max_tokens</td>
+<td>150–300</td>
+<td>只输出判定与短理由</td>
+</tr>
+<tr>
+<td>自动规则阈值</td>
+<td>关键词全命中 或 JSON 可解析</td>
+<td>可加“部分命中”计分</td>
+</tr>
+<tr>
+<td>人工抽检率</td>
+<td>10%–20%</td>
+<td>安全/合规任务 100%</td>
+</tr>
+<tr>
+<td>人机一致率</td>
+<td>&gt;80%</td>
+<td>低于则修 rubric/换裁判</td>
+</tr>
+<tr>
+<td>消融变化量</td>
+<td>一次只改一个维度</td>
+<td>同数据版本+同 seed</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="07">07 高频踩坑排查</h2>
+<p><strong>坑 1：评测集与训练集重叠</strong>
+症状：评测分虚高，上线被真实请求打脸。
+解法：评测集先建并锁版；新数据入库前与评测集 MinHash 去重。</p>
+<p><strong>坑 2：评测题太少</strong>
+症状：10 条题里错 1 条，通过率就掉 10%，无法区分模型。
+解法：50 条起步；对差异用 Bootstrap/多次抽样看波动。</p>
+<p><strong>坑 3：只报一个总分</strong>
+症状：总分涨了，但 refusal 任务全挂没人发现。
+解法：按任务类型分组报告；重点任务单独列。</p>
+<p><strong>坑 4：LLM 裁判不校偏</strong>
+症状：裁判偏爱长答案/先出现的答案，结论失真。
+解法：随机交换顺序、固定 rubric、temperature=0、人工抽检校准一致率。</p>
+<p><strong>坑 5：test 集反复跑</strong>
+症状：用 test 调参调了十轮，test 变成了 dev。
+解法：dev 调参，test 只在最终验收跑；test 泄漏了就换新题。</p>
+<p><strong>坑 6：消融变量混杂</strong>
+症状：同时换了数据+模板+seed，效果变了不知道谁的功劳。
+解法：一次一变量；同数据版本、同 seed、同评测。</p>
+<p><strong>坑 7：只测“会不会”，不测“好不好”</strong>
+症状：关键词全中但回答啰嗦/不礼貌，用户不买账。
+解法：关键词/格式测“会”，LLM 裁判+人工测“好”，两层都要。</p>
+<hr />
+<h2 id="08">08 进阶优化：评测体系的进化方向</h2>
+<p><strong>① Bootstrap 置信区间</strong>：对评测集有放回抽样 N 次，给出“通过率 95% 置信区间”，避免“差 2% 就宣称更好”。</p>
+<p><strong>② 裁判校准集</strong>：维护 50–100 条“人工已判分”的金样，每次换 rubric/裁判都先跑校准集，一致率达标才上岗。</p>
+<p><strong>③ 持续评测流水线</strong>：数据/模型变更自动触发同一套评测，报告进 CI——模型迭代从“手动跑分”变成“自动门禁”（第 44 章）。</p>
+<p><strong>④ 综合分与权重</strong>：按业务目标给任务加权（如领域 60%+通用 30%+格式 10%），用综合分做自动选型；权重本身也要评审。</p>
+<p><strong>⑤ 线上指标闭环</strong>：离线评测只是代理指标，最终以线上 A/B（满意度、采纳率、错误率）为准；定期回填线上 badcase 进评测集，让评测集跟着业务进化。</p>
+<hr />
+<h2 id="09-top3">09 本章核心总结（TOP3）</h2>
+<p><strong>TOP1</strong>：评测体系四层：锁版评测集（dev/test、与训练去重）+ 自动规则 + LLM 裁判 + 人工抽检；报告按任务分组，不只看总分。</p>
+<p><strong>TOP2</strong>：LLM 裁判必须防偏置：随机交换顺序、固定 rubric、temperature=0、人工校准一致率&gt;80%；裁判不可信时先修 rubric。</p>
+<p><strong>TOP3</strong>：消融实验一次只改一个变量（同数据、同 seed、同评测）；test 集只做最终验收；评测集与 badcase 持续进化，成为模型迭代的“法庭”。</p>
+<hr />
+<h2 id="10">10 连载衔接</h2>
+<p>上一章（第 19 章）教会你读曲线；本章建立了“效果法庭”——从评测集到裁判再到消融，主线工程的每次微调都有了可信的判决书。</p>
+<p>下一章攻克多轮场景：【第 21 章】多轮对话微调专项：长上下文、多轮数据与稳定性。单轮评测通过 ≠ 多轮对话不崩，多轮是另一个战场。</p>
+<hr />
+<h2 id="11">11 话题标签与系列目录索引</h2>
+<p>话题标签：<strong>#LLM全栈工程 #效果评估 #评测集 #LLM裁判 #消融实验 #工程实战</strong>（Voice前沿 出品，欢迎收藏追更）</p>
+<p><strong>系列目录（46 章，随连载持续更新）</strong></p>
+<p>第 0 阶段·开篇引路
+- 01 一条大模型生产线全程发生了什么
+- 02 2 小时跑通最小闭环
+- 03 预训练到底在练什么</p>
+<p>第 1 阶段·预训练工程·数据核心层
+- 04 数据管道从零构建
+- 05 数据清洗规范与脏数据剔除
+- 06 文本过滤实战
+- 07 数据去重算法
+- 08 敏感数据脱敏
+- 09 数据质量打分体系
+- 10 领域专属数据构建
+- 11 增量预训练方案
+- 12 预训练超参选型与硬件适配
+- 13 断点续训、收敛判断与失败排查</p>
+<p>第 2 阶段·微调与对齐体系
+- 14 全维度微调技术拆解
+- 15 SFT 监督微调实战
+- 16 SFT 数据集构建与标注规范
+- 17 微调模板设计
+- 18 微调超参调优策略
+- 19 过拟合、欠拟合与灾难遗忘
+- 20 微调效果评估体系（本篇）
+- 21 多轮对话微调专项
+- 22 模型蒸馏实战
+- 23 奖励模型训练
+- 24 RLHF/PPO 工程落地
+- 25 RLAIF：AI 反馈自动对齐
+- 26 小样本与领域自适应微调</p>
+<p>第 3 阶段·基础部署与推理优化
+- 27 部署框架横向对比
+- 28 vLLM 部署实战与参数调优
+- 29 SGLang 高性能推理落地
+- 30 TensorRT-LLM 固化与加速
+- 31 模型量化实操
+- 32 模型剪枝与蒸馏压缩
+- 33 KV Cache 优化与上下文窗口拓展
+- 34 流式推理封装与高并发服务化</p>
+<p>第 4 阶段·高阶推理编译器极致优化
+- 35 推理编译器核心原理
+- 36 算子融合与计算图编译
+- 37 动态 shape 与显存编译器优化
+- 38 Speculative Decoding 投机推理进阶
+- 39 批量调度与并行深度适配
+- 40 内核重构与编译级量化</p>
+<p>第 5 阶段·全栈工程联调与项目落地
+- 41 全链路串联：数据到上线一体化流程
+- 42 领域大模型定制化落地
+- 43 高并发生产适配与端侧部署
+- 44 模型迭代升级与性能对标评测
+- 45 线上问题闭环排查
+- 46 工程化最佳实践汇总（手册终章）</p>
+<hr />
+<p><em>本文由 Voice前沿 出品 · 转载注明出处 · 下一篇：第 21 章 多轮对话微调专项</em></p>
+</article>
+<nav class="prevnext"><a href="ch19.html">← 第 19 章 【LLM全栈工程·第19章】过拟合、欠拟合与灾难遗忘：症状、归因与解法</a><a href="ch21.html" style="text-align:right">第 21 章 【LLM全栈工程·第21章】多轮对话微调专项：长上下文、多轮数据与稳定性 →</a></nav>
+</main>
+<footer class="wrap"><p>LLM 全栈工程 · Voice前沿 出品 · 46 章连载 · 收藏即手册</p></footer>
+</body>
+</html>

@@ -1,0 +1,538 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>【LLM全栈工程·第15章】SFT 监督微调实战：数据、训练、评估到合并上线 · LLM 全栈工程</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header"><div class="wrap">
+<a class="brand" href="../index.html">LLM 全栈工程<small>LLM 工业级全栈工程落地手册 · 46 章</small></a>
+<nav><a href="../index.html">目录</a><a href="https://github.com/">GitHub 仓库</a></nav>
+</div></header>
+<main class="wrap">
+<nav class="crumbs"><a href="../index.html">全部章节</a> / 【LLM全栈工程·第15章】SFT 监督微调实战：数据、训练、评估到合并上线</nav>
+<details class="toc-box"><summary>本章目录</summary><div class="toc">
+<ul>
+<li><a href="#_1">单篇内容卡（排版本忽略）</a></li>
+<li><a href="#01">01 开篇导语</a></li>
+<li><a href="#02-sft">02 SFT 到底在学什么：三个关键机制</a><ul>
+<li><a href="#21-sft">2.1 SFT 教“格式与行为”，不负责“灌知识”</a></li>
+<li><a href="#22-response-only-loss">2.2 Response-only Loss：只让模型学“答案”</a></li>
+<li><a href="#23-chat-template">2.3 Chat Template：模型“说话”的格式约定</a></li>
+</ul>
+</li>
+<li><a href="#03-sft">03 工业 SFT 工作流：七步闭环</a></li>
+<li><a href="#04">04 技术选型：框架、方法与评测口径</a></li>
+<li><a href="#05-sft-1">05 分步实操：七步跑通工业 SFT（约 1 小时）</a><ul>
+<li><a href="#step-1-train-val-held-out10">Step 1 数据切分：train / val / held-out（10 分钟）</a></li>
+<li><a href="#step-2-5">Step 2 注册数据集（5 分钟）</a></li>
+<li><a href="#step-3-5">Step 3 写训练配置（5 分钟）</a></li>
+<li><a href="#step-4-2040">Step 4 训练（20–40 分钟）</a></li>
+<li><a href="#step-5-5">Step 5 合并导出（5 分钟）</a></li>
+<li><a href="#step-6-5">Step 6 部署（5 分钟）</a></li>
+<li><a href="#step-7-held-out-10">Step 7 Held-out 评测回归（10 分钟）</a></li>
+<li><a href="#step-8">Step 8 归档</a></li>
+</ul>
+</li>
+<li><a href="#06-sft">06 参数详解：SFT 关键配置速查</a></li>
+<li><a href="#07">07 高频踩坑排查</a></li>
+<li><a href="#08-sft">08 进阶优化：SFT 的进化方向</a></li>
+<li><a href="#09-top3">09 本章核心总结（TOP3）</a></li>
+<li><a href="#10">10 连载衔接</a></li>
+<li><a href="#11">11 话题标签与系列目录索引</a></li>
+</ul>
+</div>
+</details>
+<article class="article">
+<h1 id="llm15sft">【LLM全栈工程·第15章】SFT 监督微调实战：数据、训练、评估到合并上线</h1>
+<blockquote>
+<p>本篇为「LLM全栈工程」连载第 15 章（Voice前沿）。主标题以上为准；备选标题（供运营选用，不进正文）：① 微调不是“跑个脚本”就完事：SFT 全流程七步实战；② 让模型学会按你的格式回答：监督微调从数据到上线；③ SFT 最容易翻车的三个环节：模板、Loss 掩码与评测泄漏。</p>
+</blockquote>
+<hr />
+<h2 id="_1">单篇内容卡（排版本忽略）</h2>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>章节定位</td>
+<td>「微调与对齐体系」第 2 篇：完整跑一遍工业级 SFT：数据准备→训练→评估→合并→部署→回归</td>
+</tr>
+<tr>
+<td>适用场景</td>
+<td>个人学习（单卡 LoRA SFT）；小团队领域助手开发；企业微调上线前的标准流程</td>
+</tr>
+<tr>
+<td>核心知识点</td>
+<td>SFT 在学什么（格式/行为）；response-only loss；训练/验证切分；合并部署；held-out 评测</td>
+</tr>
+<tr>
+<td>技术选型</td>
+<td>LlamaFactory vs TRL；LoRA 默认路线；合并部署 vs adapter 部署</td>
+</tr>
+<tr>
+<td>分步实操</td>
+<td>准备数据切分 → 注册数据集 → 训练配置（含 val）→ 训练 → 导出合并 → vLLM 部署 → 自动化评测</td>
+</tr>
+<tr>
+<td>参数详解</td>
+<td>val_size、epoch、LR、cutoff、eval_steps、seed 等</td>
+</tr>
+<tr>
+<td>踩坑排查</td>
+<td>模板错乱、loss 没掩码、评测泄漏、val 不设、adapter 不合并、只看 loss 不看格式</td>
+</tr>
+<tr>
+<td>进阶优化</td>
+<td>多轮数据、packing、指令多样性、困难样本挖掘、SFT+DPO 接力</td>
+</tr>
+<tr>
+<td>本章 TOP3</td>
+<td>见文末</td>
+</tr>
+<tr>
+<td>下章预告</td>
+<td>第 16 章：SFT 数据集构建与标注规范</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="01">01 开篇导语</h2>
+<p>第 02 章你已经跑过一次“最小 SFT”，第 14 章知道了方法怎么选。但“能跑通”和“能上线”之间还隔着一段路：</p>
+<ul>
+<li>训练时 loss 在降，但模型回答不按你的格式来？</li>
+<li>验证集没有单独留，训练完才发现评测题就在训练数据里？</li>
+<li>adapter 没合并，部署时加载失败？</li>
+</ul>
+<p>本章把 SFT 当“产品工序”来过一遍，七步闭环：</p>
+<p><strong>数据切分 → 注册数据集 → 配置训练（带验证）→ 训练 → 合并导出 → 部署 → held-out 评测回归</strong></p>
+<p>全程沿用主线工程 llm-demo：数据是第 10 章的帮助台问答，底座是第 02 章的 Qwen2.5-7B-Instruct，框架是 LlamaFactory。跑完你会得到：一份带验证切分的数据集、一份训练产物、一个能部署的合并模型、一份自动化评测报告。</p>
+<blockquote>
+<p>一句话记住本章：<strong>SFT 的质量不在训练脚本，而在“数据怎么切、Loss 怎么算、效果怎么验”三个细节里。</strong></p>
+</blockquote>
+<hr />
+<h2 id="02-sft">02 SFT 到底在学什么：三个关键机制</h2>
+<h3 id="21-sft">2.1 SFT 教“格式与行为”，不负责“灌知识”</h3>
+<p>CPT（第 11 章）负责把新知识写进参数；SFT 负责让模型学会：看到指令怎么组织回答、按什么格式输出、什么情况要拒绝。用领域问答做 SFT 时，答案里的知识最好底座/CPT 已经具备，SFT 主要学“怎么把知识按规范说出来”。</p>
+<h3 id="22-response-only-loss">2.2 Response-only Loss：只让模型学“答案”</h3>
+<p>SFT 样本是“指令+回答”。如果让模型对整段文本（包括指令）都计算损失，模型会花一半力气去“背问题”。工业标准做法是<strong>只对回答部分计算 loss，指令部分用 -100 掩码掉</strong>——模型只学“看到这个问题该怎么答”。</p>
+<p>LlamaFactory 的 alpaca/sharegpt 格式会自动做这件事，但你要知道它存在：<strong>自写训练脚本时最容易漏的就是这个掩码。</strong></p>
+<h3 id="23-chat-template">2.3 Chat Template：模型“说话”的格式约定</h3>
+<p>同样的内容，套不同的聊天模板，模型行为可能完全不同（system 角色、助手前缀、结束符）。训练与推理必须用同一套模板，且与底座官方模板一致——模板错乱的典型症状是：训练 loss 正常，生成却前言不搭后语。</p>
+<blockquote>
+<p>记忆锚点：<strong>SFT = 用“问题-标准答案”对，教会模型按模板与格式回答问题；问题部分不参与损失，答案部分才是学习对象。</strong></p>
+</blockquote>
+<h2 id="03-sft">03 工业 SFT 工作流：七步闭环</h2>
+<pre><code class="language-text">① 数据准备（清洗/切分/质检）
+   → ② 数据集注册（dataset_info）
+   → ③ 训练配置（LoRA + 验证集 + 固定 seed）
+   → ④ 训练（盯 train/val loss）
+   → ⑤ 合并导出（adapter -&gt; 完整权重）
+   → ⑥ 部署（vLLM OpenAI 兼容服务）
+   → ⑦ Held-out 评测回归（领域题 + 通用题）
+</code></pre>
+<p>每一步都有“验收动作”：</p>
+<table>
+<thead>
+<tr>
+<th>步骤</th>
+<th>验收动作</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>数据切分</td>
+<td>train/val 无重叠；val 与训练不同分布但同格式</td>
+</tr>
+<tr>
+<td>注册</td>
+<td>打印一条预处理样本，人工核对模板</td>
+</tr>
+<tr>
+<td>训练</td>
+<td>train loss 降、val loss 同步降、无 spike</td>
+</tr>
+<tr>
+<td>合并</td>
+<td>加载后能正常 generate</td>
+</tr>
+<tr>
+<td>部署</td>
+<td>接口响应正常、格式合规</td>
+</tr>
+<tr>
+<td>评测</td>
+<td>领域题通过率提升、通用题不掉</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="04">04 技术选型：框架、方法与评测口径</h2>
+<table>
+<thead>
+<tr>
+<th>决策点</th>
+<th>推荐</th>
+<th>备选</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>微调方法</td>
+<td>LoRA（数据&lt;10 万时性价比最高）</td>
+<td>QLoRA（显存紧）、全参（数据大+算力足）</td>
+</tr>
+<tr>
+<td>框架</td>
+<td>LlamaFactory（配置驱动、模板处理成熟）</td>
+<td>TRL（要更底层控制）</td>
+</tr>
+<tr>
+<td>数据格式</td>
+<td>Alpaca/ShareGPT（LlamaFactory 原生支持）</td>
+<td>自写格式（需自实现 loss 掩码）</td>
+</tr>
+<tr>
+<td>评测</td>
+<td>领域 held-out 题 + 通用题 + 格式合规检查</td>
+<td>只看 loss（不推荐）</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>选型结论：<strong>主线工程用 LoRA + LlamaFactory + 领域 held-out 评测</strong>；当需要多轮对话、工具调用等复杂格式时再升级 ShareGPT 格式（第 17/21 章）。</p>
+</blockquote>
+<h2 id="05-sft-1">05 分步实操：七步跑通工业 SFT（约 1 小时）</h2>
+<h3 id="step-1-train-val-held-out10">Step 1 数据切分：train / val / held-out（10 分钟）</h3>
+<p>保存 scripts/prepare_sft.py：</p>
+<pre><code class="language-python"># scripts/prepare_sft.py —— 领域问答 -&gt; train/val 切分（固定种子）
+import json
+import pathlib
+import random
+
+root = pathlib.Path(__file__).resolve().parent.parent
+src = root / &quot;domain&quot; / &quot;domain_out&quot; / &quot;domain_qa.jsonl&quot;
+data_dir = root / &quot;data&quot;
+
+rows = [json.loads(line) for line in open(src, encoding=&quot;utf-8&quot;)]
+random.seed(42)
+random.shuffle(rows)
+
+n_val = max(1, int(len(rows) * 0.2))
+val_rows = rows[:n_val]
+train_rows = rows[n_val:]
+
+def write_rows(path, items):
+    with open(path, &quot;w&quot;, encoding=&quot;utf-8&quot;) as f:
+        for item in items:
+            f.write(json.dumps(item, ensure_ascii=False) + &quot;\n&quot;)
+
+write_rows(data_dir / &quot;sft_train.jsonl&quot;, train_rows)
+write_rows(data_dir / &quot;sft_val.jsonl&quot;, val_rows)
+print(&quot;train:&quot;, len(train_rows), &quot;val:&quot;, len(val_rows))
+print(&quot;val file -&gt; data/sft_val.jsonl（held-out 评测用）&quot;)
+</code></pre>
+<p>运行：</p>
+<pre><code class="language-bash">python scripts/prepare_sft.py
+head -n 1 data/sft_val.jsonl
+</code></pre>
+<h3 id="step-2-5">Step 2 注册数据集（5 分钟）</h3>
+<p>在 data/dataset_info.json 中追加（与现有条目并列）：</p>
+<pre><code class="language-json">{
+  &quot;sft_train&quot;: {
+    &quot;file_name&quot;: &quot;sft_train.jsonl&quot;,
+    &quot;formatting&quot;: &quot;alpaca&quot;,
+    &quot;columns&quot;: {
+      &quot;prompt&quot;: &quot;instruction&quot;,
+      &quot;query&quot;: &quot;input&quot;,
+      &quot;response&quot;: &quot;output&quot;
+    }
+  },
+  &quot;sft_val&quot;: {
+    &quot;file_name&quot;: &quot;sft_val.jsonl&quot;,
+    &quot;formatting&quot;: &quot;alpaca&quot;,
+    &quot;columns&quot;: {
+      &quot;prompt&quot;: &quot;instruction&quot;,
+      &quot;query&quot;: &quot;input&quot;,
+      &quot;response&quot;: &quot;output&quot;
+    }
+  }
+}
+</code></pre>
+<h3 id="step-3-5">Step 3 写训练配置（5 分钟）</h3>
+<p>保存 configs/sft_industrial.yaml：</p>
+<pre><code class="language-yaml"># configs/sft_industrial.yaml
+model_name_or_path: models/Qwen2.5-7B-Instruct
+template: qwen
+stage: sft
+finetuning_type: lora
+dataset_dir: data
+dataset: sft_train
+val_size: 0.2
+cutoff_len: 1024
+
+per_device_train_batch_size: 2
+per_device_eval_batch_size: 2
+gradient_accumulation_steps: 8
+learning_rate: 2.0e-4
+num_train_epochs: 5.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.1
+
+bf16: true
+seed: 42
+eval_strategy: steps
+eval_steps: 10
+logging_steps: 5
+save_steps: 20
+
+lora_rank: 16
+lora_alpha: 32
+lora_dropout: 0.05
+
+output_dir: outputs/helpdesk-sft
+plot_loss: true
+</code></pre>
+<blockquote>
+<p>说明：val_size=0.2 让训练过程自带验证（看 val loss 防过拟合）；字段名在不同 LlamaFactory 版本可能为 evaluation_strategy，以官方文档为准。sft_val.jsonl 是训练完成后的外部 held-out 评测集，两者用途不同。</p>
+</blockquote>
+<h3 id="step-4-2040">Step 4 训练（20–40 分钟）</h3>
+<pre><code class="language-bash">CUDA_VISIBLE_DEVICES=0 llamafactory-cli train configs/sft_industrial.yaml
+</code></pre>
+<p>观察要点：train loss 与 val loss 同步下降；如果 train loss 降而 val loss 回升，说明开始过拟合（数据少时尤其常见，此时应提前用中间的 checkpoint）。</p>
+<h3 id="step-5-5">Step 5 合并导出（5 分钟）</h3>
+<p>保存 configs/export_sft.yaml（指向本次训练产物）：</p>
+<pre><code class="language-yaml">model_name_or_path: models/Qwen2.5-7B-Instruct
+adapter_name_or_path: outputs/helpdesk-sft
+template: qwen
+finetuning_type: lora
+export_dir: models/helpdesk-sft-merged
+export_size: 2
+export_legacy_format: false
+</code></pre>
+<pre><code class="language-bash">llamafactory-cli export configs/export_sft.yaml
+</code></pre>
+<h3 id="step-6-5">Step 6 部署（5 分钟）</h3>
+<pre><code class="language-bash">vllm serve models/helpdesk-sft-merged \
+  --served-model-name helpdesk-sft \
+  --max-model-len 4096 \
+  --gpu-memory-utilization 0.90 \
+  --port 8000
+</code></pre>
+<h3 id="step-7-held-out-10">Step 7 Held-out 评测回归（10 分钟）</h3>
+<p>保存 scripts/sft_eval.py：</p>
+<pre><code class="language-python"># scripts/sft_eval.py —— SFT 后 held-out 评测：领域知识命中 + 通用可用性
+import json
+import pathlib
+from openai import OpenAI
+
+client = OpenAI(base_url=&quot;http://localhost:8000/v1&quot;, api_key=&quot;EMPTY&quot;)
+
+# 固定领域题与必须命中的关键信息（来自公司知识库规则）
+domain_cases = [
+    (&quot;打印机连不上，按公司规定怎么处理？&quot;, [&quot;HP LaserJet M405&quot;, &quot;工单&quot;]),
+    (&quot;公司 WiFi 连不上怎么办？&quot;, [&quot;Corp-WiFi&quot;]),
+    (&quot;VPN 账号被锁定了怎么办？&quot;, [&quot;30 分钟&quot;]),
+    (&quot;邮箱容量超了怎么办？&quot;, [&quot;90%&quot;]),
+]
+general_cases = [
+    (&quot;请用一句话解释什么是注意力机制。&quot;, None),
+]
+
+def ask(question):
+    resp = client.chat.completions.create(
+        model=&quot;helpdesk-sft&quot;,
+        messages=[{&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: question}],
+        temperature=0.2,
+        max_tokens=300,
+    )
+    return resp.choices[0].message.content
+
+results = []
+for q, keywords in domain_cases:
+    answer = ask(q)
+    hit = all(k in answer for k in keywords) if keywords else len(answer) &gt; 20
+    results.append({&quot;question&quot;: q, &quot;pass&quot;: hit, &quot;answer&quot;: answer[:120]})
+    print((&quot;PASS&quot; if hit else &quot;FAIL&quot;), q)
+
+report = {&quot;total&quot;: len(results), &quot;pass&quot;: sum(1 for r in results if r[&quot;pass&quot;])}
+out = pathlib.Path(__file__).resolve().parent.parent / &quot;logs&quot; / &quot;sft_eval_report.json&quot;
+with open(out, &quot;w&quot;, encoding=&quot;utf-8&quot;) as f:
+    json.dump({&quot;report&quot;: report, &quot;results&quot;: results}, f, ensure_ascii=False, indent=2)
+print(&quot;summary:&quot;, report)
+</code></pre>
+<p>运行：</p>
+<pre><code class="language-bash">python scripts/sft_eval.py
+cat logs/sft_eval_report.json
+</code></pre>
+<p><strong>验收线</strong>：领域题 4/4 命中公司规则关键信息，通用题仍能正常回答；若领域题不达标，先查数据质量与模板，再调参（第 18 章），不要盲目加 epoch。</p>
+<h3 id="step-8">Step 8 归档</h3>
+<pre><code class="language-bash">cd llm-demo
+git add data configs outputs scripts logs
+git commit -m &quot;sft: helpdesk industrial v1 (train/val split, eval 4/4)&quot;
+git tag sft-helpdesk-v1
+</code></pre>
+<h2 id="06-sft">06 参数详解：SFT 关键配置速查</h2>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>参考取值</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>val_size</td>
+<td>0.1–0.2</td>
+<td>数据少可 0.1；训练过程看 val loss 防过拟合</td>
+</tr>
+<tr>
+<td>num_train_epochs</td>
+<td>2–5</td>
+<td>小数据 3–5；盯 val loss 决定是否提前停</td>
+</tr>
+<tr>
+<td>learning_rate</td>
+<td>LoRA 1e-4~3e-4</td>
+<td>全参 1e-5~2e-5</td>
+</tr>
+<tr>
+<td>cutoff_len</td>
+<td>1024–4096</td>
+<td>超过会截断答案，长输出任务要加</td>
+</tr>
+<tr>
+<td>per_device_train_batch_size</td>
+<td>1–8</td>
+<td>等效 batch 16–64</td>
+</tr>
+<tr>
+<td>seed</td>
+<td>固定（如 42）</td>
+<td>保证切分与训练可复现</td>
+</tr>
+<tr>
+<td>eval_steps</td>
+<td>每 5%–10% 步数</td>
+<td>太频繁浪费，太稀疏发现不了过拟合</td>
+</tr>
+<tr>
+<td>模板</td>
+<td>与底座官方一致</td>
+<td>qwen 用 qwen，llama 用 llama</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>新手最容易忽略的是 seed 与 val_size：不固定 seed，两次训练不可比；不设验证集，过拟合只能靠猜。</p>
+</blockquote>
+<hr />
+<h2 id="07">07 高频踩坑排查</h2>
+<p><strong>坑 1：模板与底座不匹配</strong>
+症状：训练 loss 正常，生成前言不搭后语。
+解法：训练与推理统一用底座官方 chat template（config 里 template 字段）；打印一条预处理样本人工核对。</p>
+<p><strong>坑 2：自写脚本没做 response-only loss 掩码</strong>
+症状：模型把“问题”也背下来了，问他问题他会复述问题。
+解法：用 LlamaFactory 等成熟框架的 alpaca/sharegpt 格式；自写时对 instruction 部分用 -100 掩码。</p>
+<p><strong>坑 3：评测题混进训练集</strong>
+症状：评测分虚高，上线被打回原形。
+解法：先切分再训练；held-out 集与训练集去重（MinHash）；评测集锁版本。</p>
+<p><strong>坑 4：没有验证集就开训</strong>
+症状：loss 一直降，不知道已经过拟合。
+解法：val_size 0.1–0.2，盯 val loss；val loss 回升即回退到最优 checkpoint。</p>
+<p><strong>坑 5：adapter 不合并直接部署</strong>
+症状：部署环境加载 adapter 报错或行为不一致。
+解法：统一 export 合并；合并后跑一遍冒烟问答。</p>
+<p><strong>坑 6：只看 loss 不看格式</strong>
+症状：loss 很低，但回答不按“公司规定格式”来。
+解法：评测里加“格式合规检查”（关键词/结构命中），SFT 的产出是文本行为，不是 loss 数字。</p>
+<p><strong>坑 7：小数据跑太多 epoch</strong>
+症状：20 条数据跑 20 epoch，模型把样例背得滚瓜烂熟。
+解法：小数据 3–5 epoch + 早停；效果不够先加数据（第 16 章），而不是加 epoch。</p>
+<hr />
+<h2 id="08-sft">08 进阶优化：SFT 的进化方向</h2>
+<p><strong>① 困难样本挖掘</strong>：训练后把评测中答错的题收集起来，人工修正/扩充后再训——SFT 数据迭代比调参更值钱。</p>
+<p><strong>② 多轮与工具调用格式</strong>：业务需要多轮记忆/工具调用时，从 Alpaca 升级 ShareGPT 格式，并在训练中混合单轮+多轮数据（第 17/21 章）。</p>
+<p><strong>③ SFT+DPO 接力</strong>：SFT 解决“会答”，DPO/RLHF 解决“答得好不好”（第 23–25 章）；先 SFT 到收敛，再对齐，顺序不要反。</p>
+<p><strong>④ 数据配比与课程</strong>：通用指令+领域指令+负样本按比例混合，先易后难课程式训练，能同时保通用与领域。</p>
+<p><strong>⑤ 训练-评测闭环自动化</strong>：数据变更→自动训练→自动 held-out 评测→报告归档，模型迭代从“手动跑”变成“流水线”（第 44 章展开）。</p>
+<hr />
+<h2 id="09-top3">09 本章核心总结（TOP3）</h2>
+<p><strong>TOP1</strong>：SFT 教“格式与行为”，知识靠 CPT；核心机制是 response-only loss 与 chat template——问题不参与损失，模板训练推理必须一致。</p>
+<p><strong>TOP2</strong>：工业 SFT 七步闭环：数据切分→注册→训练（带 val）→合并→部署→held-out 评测→归档；seed 固定、val 隔离、adapter 合并三个细节决定成败。</p>
+<p><strong>TOP3</strong>：SFT 的验收是“领域 held-out 题命中公司规则 + 通用题不掉 + 格式合规”，不是 loss；效果不够先查数据与模板，再调参。</p>
+<hr />
+<h2 id="10">10 连载衔接</h2>
+<p>上一章（第 14 章）教了方法怎么选；本章把 SFT 当成产品工序完整跑了一遍——从 20 条领域问答出发，得到了合并模型和 4/4 的领域评测。</p>
+<p>下一章往上游走：【第 16 章】SFT 数据集构建与标注规范。20 条只能演示流程，真实项目需要几千上万条高质量指令数据——怎么设计任务、怎么标注、怎么质检，是 SFT 效果的真正分水岭。</p>
+<hr />
+<h2 id="11">11 话题标签与系列目录索引</h2>
+<p>话题标签：<strong>#LLM全栈工程 #SFT #监督微调 #LoRA #大模型微调 #工程实战</strong>（Voice前沿 出品，欢迎收藏追更）</p>
+<p><strong>系列目录（46 章，随连载持续更新）</strong></p>
+<p>第 0 阶段·开篇引路
+- 01 一条大模型生产线全程发生了什么
+- 02 2 小时跑通最小闭环
+- 03 预训练到底在练什么</p>
+<p>第 1 阶段·预训练工程·数据核心层
+- 04 数据管道从零构建
+- 05 数据清洗规范与脏数据剔除
+- 06 文本过滤实战
+- 07 数据去重算法
+- 08 敏感数据脱敏
+- 09 数据质量打分体系
+- 10 领域专属数据构建
+- 11 增量预训练方案
+- 12 预训练超参选型与硬件适配
+- 13 断点续训、收敛判断与失败排查</p>
+<p>第 2 阶段·微调与对齐体系
+- 14 全维度微调技术拆解
+- 15 SFT 监督微调实战（本篇）
+- 16 SFT 数据集构建与标注规范
+- 17 微调模板设计
+- 18 微调超参调优策略
+- 19 过拟合、欠拟合与灾难遗忘
+- 20 微调效果评估体系
+- 21 多轮对话微调专项
+- 22 模型蒸馏实战
+- 23 奖励模型训练
+- 24 RLHF/PPO 工程落地
+- 25 RLAIF：AI 反馈自动对齐
+- 26 小样本与领域自适应微调</p>
+<p>第 3 阶段·基础部署与推理优化
+- 27 部署框架横向对比
+- 28 vLLM 部署实战与参数调优
+- 29 SGLang 高性能推理落地
+- 30 TensorRT-LLM 固化与加速
+- 31 模型量化实操
+- 32 模型剪枝与蒸馏压缩
+- 33 KV Cache 优化与上下文窗口拓展
+- 34 流式推理封装与高并发服务化</p>
+<p>第 4 阶段·高阶推理编译器极致优化
+- 35 推理编译器核心原理
+- 36 算子融合与计算图编译
+- 37 动态 shape 与显存编译器优化
+- 38 Speculative Decoding 投机推理进阶
+- 39 批量调度与并行深度适配
+- 40 内核重构与编译级量化</p>
+<p>第 5 阶段·全栈工程联调与项目落地
+- 41 全链路串联：数据到上线一体化流程
+- 42 领域大模型定制化落地
+- 43 高并发生产适配与端侧部署
+- 44 模型迭代升级与性能对标评测
+- 45 线上问题闭环排查
+- 46 工程化最佳实践汇总（手册终章）</p>
+<hr />
+<p><em>本文由 Voice前沿 出品 · 转载注明出处 · 下一篇：第 16 章 SFT 数据集构建与标注规范</em></p>
+</article>
+<nav class="prevnext"><a href="ch14.html">← 第 14 章 【LLM全栈工程·第14章】全维度微调技术拆解：全参/LoRA/QLoRA/适配器怎么选</a><a href="ch16.html" style="text-align:right">第 16 章 【LLM全栈工程·第16章】SFT 数据集构建与标注规范：指令设计、标注与质控 →</a></nav>
+</main>
+<footer class="wrap"><p>LLM 全栈工程 · Voice前沿 出品 · 46 章连载 · 收藏即手册</p></footer>
+</body>
+</html>

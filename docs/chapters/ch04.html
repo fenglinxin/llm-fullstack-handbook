@@ -1,0 +1,675 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>【LLM全栈工程·第04章】数据管道从零构建：原始采集、多源整合与目录设计 · LLM 全栈工程</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header"><div class="wrap">
+<a class="brand" href="../index.html">LLM 全栈工程<small>LLM 工业级全栈工程落地手册 · 46 章</small></a>
+<nav><a href="../index.html">目录</a><a href="https://github.com/">GitHub 仓库</a></nav>
+</div></header>
+<main class="wrap">
+<nav class="crumbs"><a href="../index.html">全部章节</a> / 【LLM全栈工程·第04章】数据管道从零构建：原始采集、多源整合与目录设计</nav>
+<details class="toc-box"><summary>本章目录</summary><div class="toc">
+<ul>
+<li><a href="#_1">单篇内容卡（排版本忽略）</a></li>
+<li><a href="#01">01 开篇导语</a></li>
+<li><a href="#02">02 白话原理：数据管道 = 搬运 + 质检 + 记账</a></li>
+<li><a href="#03">03 原始数据从哪来：常见来源与接入方式</a><ul>
+<li><a href="#31">3.1 常见语料来源（预训练/增量预训练视角）</a></li>
+<li><a href="#32">3.2 三种接入模式</a></li>
+</ul>
+</li>
+<li><a href="#04">04 管道架构与目录设计：先定规矩再写代码</a><ul>
+<li><a href="#41">4.1 数据分层（五层模型）</a></li>
+<li><a href="#42">4.2 目录分区规范</a></li>
+<li><a href="#43-manifest">4.3 清单（Manifest）：数据管的“账本”</a></li>
+<li><a href="#44">4.4 文件格式与大小</a></li>
+</ul>
+</li>
+<li><a href="#05">05 技术选型：处理引擎与编排框架怎么选</a><ul>
+<li><a href="#51">5.1 处理引擎</a></li>
+<li><a href="#52">5.2 编排框架（谁按顺序跑任务、谁负责重试）</a></li>
+</ul>
+</li>
+<li><a href="#06-30">06 分步实操：30 分钟搭出最小数据管道</a><ul>
+<li><a href="#step-1-2">Step 1 建目录（2 分钟）</a></li>
+<li><a href="#step-2-5">Step 2 造三个“多源”样例（5 分钟）</a></li>
+<li><a href="#step-3-5">Step 3 归一化：多源变一源（5 分钟）</a></li>
+<li><a href="#step-4-manifest5">Step 4 记账：生成 manifest（5 分钟）</a></li>
+<li><a href="#step-5-5">Step 5 版本化与可复现验证（5 分钟）</a></li>
+</ul>
+</li>
+<li><a href="#07">07 参数详解：管道设计的关键配置项</a></li>
+<li><a href="#08">08 高频踩坑排查</a></li>
+<li><a href="#09">09 进阶优化：从小管道到工业管道</a></li>
+<li><a href="#10-top3">10 本章核心总结（TOP3）</a></li>
+<li><a href="#11">11 连载衔接</a></li>
+<li><a href="#12">12 话题标签与系列目录索引</a></li>
+</ul>
+</div>
+</details>
+<article class="article">
+<h1 id="llm04">【LLM全栈工程·第04章】数据管道从零构建：原始采集、多源整合与目录设计</h1>
+<blockquote>
+<p>本篇为「LLM全栈工程」连载第 04 章（Voice前沿）。主标题以上为准；备选标题（供运营选用，不进正文）：① 大模型的第一桶金是数据：从 0 搭一条能审计、能复现的数据管道；② 原始语料怎么变成训练集？一张目录结构图讲清数据管道；③ 别再用“下载完就开训”了：数据管道的分层、清单与血缘设计。</p>
+</blockquote>
+<hr />
+<h2 id="_1">单篇内容卡（排版本忽略）</h2>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>章节定位</td>
+<td>「预训练工程·数据核心层」第 2 篇：解决“原始语料从哪来、怎么整合、怎么管版本”的地基问题</td>
+</tr>
+<tr>
+<td>适用场景</td>
+<td>个人学习（本地小管道）；小团队做领域语料；企业搭建可审计的数据生产线</td>
+</tr>
+<tr>
+<td>核心知识点</td>
+<td>管道五层模型；多源整合与格式归一；目录分层规范；manifest 清单与血缘；版本化与可复现</td>
+</tr>
+<tr>
+<td>技术选型</td>
+<td>数据源接入方式、单机/分布式处理引擎、编排框架（Airflow/Dagster/Prefect/自研）对比</td>
+</tr>
+<tr>
+<td>分步实操</td>
+<td>建目录 → 造样例源 → 归一化脚本 → manifest 审计 → Git 打版本，跑通最小数据管道</td>
+</tr>
+<tr>
+<td>参数详解</td>
+<td>分片大小、压缩格式、目录分区、manifest 必填字段、快照与保留策略</td>
+</tr>
+<tr>
+<td>踩坑排查</td>
+<td>无版本无血缘、格式混乱、来源与 License 不清、内存爆炸、目录过深、清洗结果不可复现</td>
+</tr>
+<tr>
+<td>进阶优化</td>
+<td>增量采集、流批一体、质量闸门前置、预算抽样、数据目录与血缘系统</td>
+</tr>
+<tr>
+<td>本章 TOP3</td>
+<td>见文末</td>
+</tr>
+<tr>
+<td>下章预告</td>
+<td>第 05 章：数据清洗规范与脏数据剔除</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="01">01 开篇导语</h2>
+<p>上一章讲清了预训练的原理——模型在超大语料上玩“文字接龙”。那这些语料到底从哪来？怎么从“互联网上的一堆网页”变成“可以开训的一堆文件”？</p>
+<p>很多团队死在这一步：数据下载了十几个 TB，放在一个叫 data_final 的文件夹里，三个月后没人知道哪个版本训了哪个模型、哪些文件重复、哪些来自没授权来源。<strong>模型没训出来，先欠了一屁股数据债。</strong></p>
+<p>这一章不聊清洗算法（那是第 05–10 章的事），只解决三个地基问题：</p>
+<ol>
+<li><strong>原始数据从哪采、怎么采</strong>；</li>
+<li><strong>多源数据怎么整合成统一格式</strong>；</li>
+<li><strong>目录和版本怎么设计，才能可审计、可复现</strong>。</li>
+</ol>
+<p>交付物：一个 30 分钟能跑通的最小数据管道——带分层目录、清单文件、归一化脚本和版本标签。它是主线工程“领域大模型生产流水线”的数据起点，也是后面每一章清洗/去重/打分代码的“挂载点”。</p>
+<hr />
+<h2 id="02">02 白话原理：数据管道 = 搬运 + 质检 + 记账</h2>
+<p>把数据管道想成一条工厂流水线，原料是各种来源的原始文本，成品是“可以开训的训练集文件”。流水线上站着三类角色：</p>
+<p><strong>① 搬运工（采集与整合）</strong>
+把网页、代码、文档、问答、日志从各个源头搬回来，统一成同一种包装（JSONL），并记下每件货的“进货单”（来源、时间、许可）。</p>
+<p><strong>② 质检员（清洗与过滤）</strong>
+把脏的、重复的、敏感的、低质的货挑出来（本章只留质检位，具体算法后面章节逐个上）。</p>
+<p><strong>③ 记账员（清单与版本）</strong>
+每批货进出都记账：这一版数据由哪些源文件、什么清洗规则、哪个 commit 产生。<strong>没有记账的数据，等于没做过实验。</strong></p>
+<p>管道设计的核心原则只有一条：<strong>每个环节输入输出都必须是“文件 + 清单”，而不是“内存里的变量”</strong>——因为只有落盘的东西才能断点续跑、并行处理、回溯版本。</p>
+<blockquote>
+<p>一句话记住本章：<strong>先让数据“有名字、有来源、有版本、可重跑”，再谈清洗算法。</strong></p>
+</blockquote>
+<h2 id="03">03 原始数据从哪来：常见来源与接入方式</h2>
+<h3 id="31">3.1 常见语料来源（预训练/增量预训练视角）</h3>
+<table>
+<thead>
+<tr>
+<th>来源类型</th>
+<th>代表</th>
+<th>内容特点</th>
+<th>接入注意</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>网页快照</td>
+<td>Common Crawl、各语言网页抓取</td>
+<td>量大、噪声大、多语言</td>
+<td>模板/导航/广告多，需第 05–06 章清洗过滤</td>
+</tr>
+<tr>
+<td>代码</td>
+<td>GitHub 公开仓库快照（注意许可筛选）</td>
+<td>代码+注释+README</td>
+<td>只保留合规 License，排除密钥与依赖噪音</td>
+</tr>
+<tr>
+<td>学术与书籍</td>
+<td>arXiv、开放书籍项目、出版社授权语料</td>
+<td>高质量长文</td>
+<td>许可与版权是红线</td>
+</tr>
+<tr>
+<td>社区问答</td>
+<td>开放问答/论坛数据</td>
+<td>问答结构好</td>
+<td>质量参差，需过滤与去重</td>
+</tr>
+<tr>
+<td>百科与结构化</td>
+<td>Wikipedia 类开放百科</td>
+<td>结构规范</td>
+<td>抽取正文时别把模板/编辑注释带进来</td>
+</tr>
+<tr>
+<td>企业内部数据</td>
+<td>工单、客服记录、文档库、日志</td>
+<td>领域价值最高</td>
+<td>脱敏先行（第 08 章），注意合规审批</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>真实性红线：<strong>一切来源先查 License 与使用条款</strong>，网页抓取要遵守 robots 与当地法规。训练数据侵权是真实的法律风险，不是“技术问题”。</p>
+</blockquote>
+<h3 id="32">3.2 三种接入模式</h3>
+<table>
+<thead>
+<tr>
+<th>模式</th>
+<th>做法</th>
+<th>适合</th>
+<th>缺点</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>全量快照</td>
+<td>周期性把源头整个拉下来（如每月网页快照）</td>
+<td>网页、百科等公开大源</td>
+<td>存储大、周期长</td>
+</tr>
+<tr>
+<td>增量同步</td>
+<td>只拉上次以来的新增/变更</td>
+<td>代码仓库、内部文档</td>
+<td>需要记录游标/断点</td>
+</tr>
+<tr>
+<td>订阅/推送</td>
+<td>源头主动推送（API webhook、消息队列）</td>
+<td>内部业务数据</td>
+<td>需要消费端稳定</td>
+</tr>
+</tbody>
+</table>
+<p>工业实践通常是“<strong>全量打底 + 增量更新</strong>”：先拉一次全量快照建基线，之后每日增量同步，按天分区落盘。</p>
+<hr />
+<h2 id="04">04 管道架构与目录设计：先定规矩再写代码</h2>
+<h3 id="41">4.1 数据分层（五层模型）</h3>
+<table>
+<thead>
+<tr>
+<th>层</th>
+<th>目录</th>
+<th>内容</th>
+<th>谁消费</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>原始层</td>
+<td>sources/</td>
+<td>源头原样落盘，只读、不改</td>
+<td>只有采集任务能写</td>
+</tr>
+<tr>
+<td>标准层</td>
+<td>staging/</td>
+<td>统一成 JSONL、补 doc_id/来源字段</td>
+<td>清洗任务</td>
+</tr>
+<tr>
+<td>清洗层</td>
+<td>clean/</td>
+<td>清洗/过滤/去重/脱敏后</td>
+<td>打分任务</td>
+</tr>
+<tr>
+<td>成品层</td>
+<td>final/</td>
+<td>按配比混合、分好 train/val 的训练集</td>
+<td>训练任务</td>
+</tr>
+<tr>
+<td>元数据层</td>
+<td>manifests/</td>
+<td>每层输出的清单、统计、规则版本</td>
+<td>人/审计/血缘</td>
+</tr>
+</tbody>
+</table>
+<p><strong>每层只依赖上一层，禁止跳层读写</strong>——这是管道不乱的第一条规矩。</p>
+<h3 id="42">4.2 目录分区规范</h3>
+<p>按“数据集/来源/日期”三层分区，加 _SUCCESS 完成标记：</p>
+<pre><code class="language-text">final/helpdesk-v1/
+├── source=helpdesk_qa/
+│   ├── date=2026-09-05/
+│   │   ├── part-00000.jsonl.gz
+│   │   ├── part-00001.jsonl.gz
+│   │   └── _SUCCESS
+│   └── date=2026-09-06/
+├── source=helpdesk_kb/
+└── manifest.json
+</code></pre>
+<p>好处：按分区增量处理、坏分区单独重跑、人眼一看就懂数据血缘。</p>
+<h3 id="43-manifest">4.3 清单（Manifest）：数据管的“账本”</h3>
+<p>每个成品数据集必须带一个 manifest.json，至少包含：</p>
+<pre><code class="language-json">{
+  &quot;dataset&quot;: &quot;helpdesk-v1&quot;,
+  &quot;version&quot;: &quot;2026-09-05.1&quot;,
+  &quot;created_by&quot;: &quot;pipeline/commit=abc1234&quot;,
+  &quot;inputs&quot;: [
+    {&quot;source&quot;: &quot;helpdesk_qa&quot;, &quot;path&quot;: &quot;sources/helpdesk_qa.jsonl&quot;, &quot;sha256&quot;: &quot;…&quot;},
+    {&quot;source&quot;: &quot;helpdesk_kb&quot;, &quot;path&quot;: &quot;sources/helpdesk_kb.jsonl&quot;, &quot;sha256&quot;: &quot;…&quot;}
+  ],
+  &quot;rules&quot;: {&quot;clean_rules_version&quot;: &quot;v0.1&quot;, &quot;filter_rules_version&quot;: &quot;v0.1&quot;},
+  &quot;stats&quot;: {&quot;rows&quot;: 120, &quot;chars&quot;: 88421, &quot;dupes_removed&quot;: 3},
+  &quot;schema_version&quot;: &quot;1&quot;
+}
+</code></pre>
+<p>有了 manifest，任何一次训练都能回答三个问题：<strong>这版数据用了哪些源？跑了哪些规则？是谁在什么代码版本下生成的？</strong> 这就是“可复现训练”的起点。</p>
+<h3 id="44">4.4 文件格式与大小</h3>
+<ul>
+<li>行格式：统一 JSONL（每行一个 JSON 对象），不要混 CSV/XML/嵌套 JSON；</li>
+<li>压缩：大文件用 gzip 或 zstd；小数据集可不压缩；</li>
+<li>分片：单文件建议控制在 128MB–1GB（压缩后），太小文件数爆炸、太大并行度差；</li>
+<li>字符编码：全部 UTF-8，入库即转码，禁止“中文变乱码”的隐形事故。</li>
+</ul>
+<h2 id="05">05 技术选型：处理引擎与编排框架怎么选</h2>
+<h3 id="51">5.1 处理引擎</h3>
+<table>
+<thead>
+<tr>
+<th>规模</th>
+<th>推荐</th>
+<th>理由</th>
+<th>别选</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>本地学习/小团队（GB 级）</td>
+<td>Python + polars/pandas + DuckDB</td>
+<td>上手快、够用、易调试</td>
+<td>为 10GB 数据上 Spark</td>
+</tr>
+<tr>
+<td>百 GB–TB 级</td>
+<td>Spark / Ray 分布式处理，或直接使用 Data-Juicer 类 LLM 数据工具</td>
+<td>并行吞吐、生态成熟</td>
+<td>单机 pandas 硬扛</td>
+</tr>
+<tr>
+<td>PB 级</td>
+<td>云数据湖 + 云托管处理</td>
+<td>存储计算分离、弹性</td>
+<td>自研分布式框架</td>
+</tr>
+</tbody>
+</table>
+<h3 id="52">5.2 编排框架（谁按顺序跑任务、谁负责重试）</h3>
+<table>
+<thead>
+<tr>
+<th>方案</th>
+<th>特点</th>
+<th>适合</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>脚本 + cron / CI</td>
+<td>零依赖</td>
+<td>管道 &lt;10 个任务、单人维护</td>
+</tr>
+<tr>
+<td>Apache Airflow</td>
+<td>生态最大、调度成熟</td>
+<td>中大型团队、复杂依赖</td>
+</tr>
+<tr>
+<td>Dagster / Prefect</td>
+<td>数据感知更强、开发体验好</td>
+<td>数据团队自建管道</td>
+</tr>
+<tr>
+<td>云工作流</td>
+<td>托管、免运维</td>
+<td>云上数据湖</td>
+</tr>
+</tbody>
+</table>
+<p>结论：<strong>起步阶段不要上编排框架</strong>——先用“目录 + 脚本 + Git 标签”把数据规整清楚，任务超过 10 个、需要定时与重试时再上 Airflow/Dagster。工具不是越多越好，数据可复现才是目的。</p>
+<hr />
+<h2 id="06-30">06 分步实操：30 分钟搭出最小数据管道</h2>
+<p>我们把管道建在第 02 章的 llm-demo 工程里，命名为 data-pipeline，后续章节的清洗/去重代码都挂在这里。</p>
+<h3 id="step-1-2">Step 1 建目录（2 分钟）</h3>
+<pre><code class="language-bash">cd llm-demo
+mkdir -p data-pipeline/{sources,staging,clean,manifests,scripts}
+</code></pre>
+<h3 id="step-2-5">Step 2 造三个“多源”样例（5 分钟）</h3>
+<p>保存 scripts/make_sources.py：</p>
+<pre><code class="language-python"># data-pipeline/scripts/make_sources.py —— 生成三个模拟数据源
+import json
+import pathlib
+
+root = pathlib.Path(__file__).resolve().parent.parent
+sources = root / &quot;sources&quot;
+sources.mkdir(parents=True, exist_ok=True)
+
+qa = [
+    {&quot;text&quot;: &quot;问题：打印机连不上怎么办？\n答案：检查电源与网络指示灯；重启打印机；删除并重新添加 HP LaserJet M405；仍失败请提交工单。&quot;, &quot;meta&quot;: {&quot;channel&quot;: &quot;qa&quot;}},
+    {&quot;text&quot;: &quot;问题：VPN 账号被锁定怎么办？\n答案：等待 30 分钟自动解锁，或联系 IT 热线。&quot;, &quot;meta&quot;: {&quot;channel&quot;: &quot;qa&quot;}},
+]
+kb = [
+    {&quot;text&quot;: &quot;规则：公司打印机型号为 HP LaserJet M405；报修入口 http://it.example.local/printer&quot;, &quot;meta&quot;: {&quot;channel&quot;: &quot;kb&quot;}},
+    {&quot;text&quot;: &quot;规则：员工 WiFi 名为 Corp-WiFi，使用域账号登录。&quot;, &quot;meta&quot;: {&quot;channel&quot;: &quot;kb&quot;}},
+]
+chat = [
+    {&quot;text&quot;: &quot;客服记录：用户反馈 WiFi 连不上，协助重置网络后恢复正常。&quot;, &quot;meta&quot;: {&quot;channel&quot;: &quot;chat&quot;}},
+    {&quot;text&quot;: &quot;客服记录：用户询问邮箱容量，引导清理大附件后解决。&quot;, &quot;meta&quot;: {&quot;channel&quot;: &quot;chat&quot;}},
+]
+
+for name, rows in [(&quot;helpdesk_qa.jsonl&quot;, qa), (&quot;helpdesk_kb.jsonl&quot;, kb), (&quot;helpdesk_chat.jsonl&quot;, chat)]:
+    with open(sources / name, &quot;w&quot;, encoding=&quot;utf-8&quot;) as f:
+        for row in rows:
+            f.write(json.dumps(row, ensure_ascii=False) + &quot;\n&quot;)
+print(&quot;sources ready:&quot;, len(qa) + len(kb) + len(chat), &quot;rows in 3 files&quot;)
+</code></pre>
+<p>运行：</p>
+<pre><code class="language-bash">python data-pipeline/scripts/make_sources.py
+ls -la data-pipeline/sources/
+</code></pre>
+<blockquote>
+<p>真实场景里，这三个文件分别来自“历史工单导出”“知识库文档”“客服聊天记录”三个系统——它们格式不同、字段不同，这就是“多源”的缩影。</p>
+</blockquote>
+<h3 id="step-3-5">Step 3 归一化：多源变一源（5 分钟）</h3>
+<p>保存 scripts/normalize_sources.py：</p>
+<pre><code class="language-python"># data-pipeline/scripts/normalize_sources.py —— 多源 -&gt; 统一 JSONL + doc_id
+import hashlib
+import json
+import pathlib
+
+root = pathlib.Path(__file__).resolve().parent.parent
+sources = root / &quot;sources&quot;
+staging = root / &quot;staging&quot;
+staging.mkdir(parents=True, exist_ok=True)
+
+rows = []
+for path in sorted(sources.glob(&quot;*.jsonl&quot;)):
+    with open(path, encoding=&quot;utf-8&quot;) as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            obj = json.loads(line)
+            text = str(obj.get(&quot;text&quot;, &quot;&quot;)).strip()
+            if not text:
+                continue
+            doc_id = hashlib.sha256(text.encode(&quot;utf-8&quot;)).hexdigest()[:16]
+            rows.append({
+                &quot;doc_id&quot;: doc_id,
+                &quot;source&quot;: path.stem,
+                &quot;text&quot;: text,
+                &quot;chars&quot;: len(text),
+                &quot;meta&quot;: obj.get(&quot;meta&quot;, {}),
+            })
+
+out_path = staging / &quot;unified.jsonl&quot;
+with open(out_path, &quot;w&quot;, encoding=&quot;utf-8&quot;) as f:
+    for row in rows:
+        f.write(json.dumps(row, ensure_ascii=False) + &quot;\n&quot;)
+
+print(&quot;staging rows:&quot;, len(rows), &quot;-&gt;&quot;, out_path)
+</code></pre>
+<p>运行并抽查：</p>
+<pre><code class="language-bash">python data-pipeline/scripts/normalize_sources.py
+head -n 1 data-pipeline/staging/unified.jsonl
+</code></pre>
+<h3 id="step-4-manifest5">Step 4 记账：生成 manifest（5 分钟）</h3>
+<p>保存 scripts/audit_manifest.py：</p>
+<pre><code class="language-python"># data-pipeline/scripts/audit_manifest.py —— 统计并写 manifest.json
+import hashlib
+import json
+import pathlib
+
+root = pathlib.Path(__file__).resolve().parent.parent
+staging = root / &quot;staging&quot;
+manifests = root / &quot;manifests&quot;
+manifests.mkdir(parents=True, exist_ok=True)
+
+rows = 0
+chars = 0
+doc_ids = set()
+for line in open(staging / &quot;unified.jsonl&quot;, encoding=&quot;utf-8&quot;):
+    obj = json.loads(line)
+    rows += 1
+    chars += obj[&quot;chars&quot;]
+    doc_ids.add(obj[&quot;doc_id&quot;])
+
+manifest = {
+    &quot;dataset&quot;: &quot;helpdesk-raw-v1&quot;,
+    &quot;version&quot;: &quot;2026-09-05.1&quot;,
+    &quot;created_by&quot;: &quot;local demo pipeline&quot;,
+    &quot;inputs&quot;: [
+        {
+            &quot;path&quot;: str(p),
+            &quot;sha256&quot;: hashlib.sha256(p.read_bytes()).hexdigest()[:16],
+        }
+        for p in sorted((root / &quot;sources&quot;).glob(&quot;*.jsonl&quot;))
+    ],
+    &quot;rules&quot;: {&quot;stage&quot;: &quot;normalize-v0.1&quot;},
+    &quot;stats&quot;: {&quot;rows&quot;: rows, &quot;chars&quot;: chars, &quot;unique_doc_ids&quot;: len(doc_ids)},
+    &quot;schema_version&quot;: &quot;1&quot;,
+}
+
+out_path = manifests / &quot;manifest.json&quot;
+with open(out_path, &quot;w&quot;, encoding=&quot;utf-8&quot;) as f:
+    json.dump(manifest, f, ensure_ascii=False, indent=2)
+print(json.dumps(manifest[&quot;stats&quot;], ensure_ascii=False))
+</code></pre>
+<p>运行：</p>
+<pre><code class="language-bash">python data-pipeline/scripts/audit_manifest.py
+cat data-pipeline/manifests/manifest.json
+</code></pre>
+<h3 id="step-5-5">Step 5 版本化与可复现验证（5 分钟）</h3>
+<pre><code class="language-bash">cd llm-demo
+git add data-pipeline
+git commit -m &quot;data-pipeline: helpdesk raw v1 (normalize v0.1)&quot;
+git tag data-pipeline-v0.1
+</code></pre>
+<p><strong>可复现验证（黄金动作）</strong>：把 data-pipeline 整个删掉重跑一遍：</p>
+<pre><code class="language-bash">rm -rf data-pipeline/sources data-pipeline/staging data-pipeline/manifests
+python data-pipeline/scripts/make_sources.py
+python data-pipeline/scripts/normalize_sources.py
+python data-pipeline/scripts/audit_manifest.py
+</code></pre>
+<p>如果第二次 manifest 的 stats 与 sha256 和第一次完全一致，说明管道是确定性的（doc_id 由内容哈希生成，天然稳定）——<strong>这就是“同一代码版本+同一输入=同一输出”的可复现性</strong>。第 05 章开始，我们就在 staging/unified.jsonl 上做清洗。</p>
+<blockquote>
+<p>本实操是“单机最小版”。企业版只是把脚本换成 Spark/Ray 任务、把目录换成对象存储、把 Git 标签换成数据目录系统，骨架完全一样：<strong>分层、清单、版本、可重跑</strong>。</p>
+</blockquote>
+<h2 id="07">07 参数详解：管道设计的关键配置项</h2>
+<table>
+<thead>
+<tr>
+<th>配置项</th>
+<th>建议</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>单文件大小</td>
+<td>128MB–1GB（压缩后）</td>
+<td>太大并行度差，太小文件数爆炸</td>
+</tr>
+<tr>
+<td>压缩格式</td>
+<td>gzip（通用）/ zstd（更快）</td>
+<td>大数据集必压，省 70% 以上存储</td>
+</tr>
+<tr>
+<td>分区字段</td>
+<td>dataset/source/date</td>
+<td>增量处理与局部重跑的基本单位</td>
+</tr>
+<tr>
+<td>每行 schema</td>
+<td>doc_id/source/text/chars/meta</td>
+<td>训练前再加 quality_score 等字段</td>
+</tr>
+<tr>
+<td>doc_id</td>
+<td>sha256(text) 前 16–32 位</td>
+<td>稳定、可去重、可溯源</td>
+</tr>
+<tr>
+<td>manifest 必填</td>
+<td>dataset/version/inputs/rules/stats/schema_version</td>
+<td>缺一项都不算正式数据集</td>
+</tr>
+<tr>
+<td>完成标记</td>
+<td>每分区写 _SUCCESS 空文件</td>
+<td>防止读到写了一半的数据</td>
+</tr>
+<tr>
+<td>保留策略</td>
+<td>原始层至少保留到模型退役</td>
+<td>复现训练永远需要原始输入</td>
+</tr>
+<tr>
+<td>抽样预算</td>
+<td>训练前按预算抽样子集试跑</td>
+<td>全量清洗前先用 1% 数据验证规则</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>参数原则：<strong>目录与清单的规范要“一开始就定”，清洗阈值可以“后面再调”</strong>——前者返工成本极高，后者只是重跑一次。</p>
+</blockquote>
+<hr />
+<h2 id="08">08 高频踩坑排查</h2>
+<p><strong>坑 1：只有一个 data_final 文件夹，没有版本</strong>
+症状：三个月后分不清哪份数据训了哪个模型。
+解法：按本章分层目录 + manifest + Git tag；每个训练任务在配置里记录数据集 version。</p>
+<p><strong>坑 2：多源格式硬塞一个脚本里解析</strong>
+症状：CSV、XML、JSON、TXT 混着读，脚本全是 if 分支。
+解法：每个源一个“适配器”，统一输出 JSONL 标准行；新增源只写新适配器，不动主流程。</p>
+<p><strong>坑 3：来源与 License 不记录</strong>
+症状：数据训完要上线才发现来源不明，只能全部下架。
+解法：manifest.inputs 里记录 source/url/license/fetched_at；无 License 的数据不进管道。</p>
+<p><strong>坑 4：内存爆炸</strong>
+症状：一个 read_csv/read_json 把 100GB 读进内存，直接 OOM。
+解法：按分区读、流式逐行处理、必要时上 Spark/Ray；单机先用 polars/duckdb 这类列式引擎。</p>
+<p><strong>坑 5：清洗结果不可复现</strong>
+症状：同一份输入两次跑出不同行数。
+解法：修掉所有随机性与“当前时间”写入；doc_id 用内容哈希；规则版本写进 manifest（第 05 章再展开规则版本管理）。</p>
+<p><strong>坑 6：目录层级无限嵌套</strong>
+症状：sources/2026/09/05/raw/html/part1/xxx.jsonl……路径比内容还长。
+解法：最多三层分区（dataset/source/date），其余信息放 manifest 字段，别塞路径。</p>
+<hr />
+<h2 id="09">09 进阶优化：从小管道到工业管道</h2>
+<p><strong>① 质量闸门前置</strong>：每个源接入时先跑 5 分钟快速体检（行数、空文本率、编码、重复率），不合格直接拒收并告警——垃圾进管道后再清洗，成本是源头拦截的十倍。</p>
+<p><strong>② 增量与全量分离</strong>：原始层“全量快照 + 每日增量”，清洗层“只重跑受影响分区”，用分区级依赖避免天天全量重算。</p>
+<p><strong>③ 预算抽样试跑</strong>：任何新清洗规则先抽 1% 数据看分布与样例，确认规则合理再全量跑，能省下大量无效算力。</p>
+<p><strong>④ 数据目录与血缘</strong>：规模上来后把 manifest 汇总进数据目录系统（如 DataHub 类方案或自研表），让“某模型用了哪版数据”可一键查询——这是大模型可审计性的基础设施。</p>
+<p><strong>⑤ 规则代码化、配置化</strong>：清洗规则不要散落在 Notebook 里，全部收进“规则包”（函数+版本号），manifest.rules 记录规则包版本。第 05–09 章会持续往这个规则包里加东西。</p>
+<hr />
+<h2 id="10-top3">10 本章核心总结（TOP3）</h2>
+<p><strong>TOP1</strong>：数据管道 = 搬运 + 质检 + 记账；核心不是算法而是规范——分层目录、统一 JSONL、manifest 清单、版本标签，四件套缺一不可。</p>
+<p><strong>TOP2</strong>：原始数据采集要先解决“来源与 License”再谈规模；接入用“全量打底 + 增量更新”，每个来源一个适配器，统一输出标准行。</p>
+<p><strong>TOP3</strong>：可复现是数据管道的及格线——同一代码版本 + 同一输入必须产出同一输出；doc_id 用内容哈希、规则版本进 manifest、输出落盘加 _SUCCESS 标记，都是为“可重跑”服务。</p>
+<hr />
+<h2 id="11">11 连载衔接</h2>
+<p>上一章（第 03 章）我们看懂了预训练的原理，也知道了“数据决定上限”；本章把数据管道的骨架立了起来——你的第一批多源原始数据已经带着 doc_id 和 manifest 躺在 staging 层。</p>
+<p>下一章开始处理“脏”：【第 05 章】数据清洗规范与脏数据剔除。我们会回答：网页模板、乱码、截断文本、广告噪音这些脏数据长什么样，怎么批量识别与剔除。</p>
+<hr />
+<h2 id="12">12 话题标签与系列目录索引</h2>
+<p>话题标签：<strong>#LLM全栈工程 #数据管道 #数据工程 #大模型训练数据 #数据血缘 #工程实战</strong>（Voice前沿 出品，欢迎收藏追更）</p>
+<p><strong>系列目录（46 章，随连载持续更新）</strong></p>
+<p>第 0 阶段·开篇引路
+- 01 一条大模型生产线全程发生了什么
+- 02 2 小时跑通最小闭环
+- 03 预训练到底在练什么</p>
+<p>第 1 阶段·预训练工程·数据核心层
+- 04 数据管道从零构建（本篇）
+- 05 数据清洗规范与脏数据剔除
+- 06 文本过滤实战
+- 07 数据去重算法
+- 08 敏感数据脱敏
+- 09 数据质量打分体系
+- 10 领域专属数据构建
+- 11 增量预训练方案
+- 12 预训练超参选型与硬件适配
+- 13 断点续训、收敛判断与失败排查</p>
+<p>第 2 阶段·微调与对齐体系
+- 14 全维度微调技术拆解
+- 15 SFT 监督微调实战
+- 16 SFT 数据集构建与标注规范
+- 17 微调模板设计
+- 18 微调超参调优策略
+- 19 过拟合、欠拟合与灾难遗忘
+- 20 微调效果评估体系
+- 21 多轮对话微调专项
+- 22 模型蒸馏实战
+- 23 奖励模型训练
+- 24 RLHF/PPO 工程落地
+- 25 RLAIF：AI 反馈自动对齐
+- 26 小样本与领域自适应微调</p>
+<p>第 3 阶段·基础部署与推理优化
+- 27 部署框架横向对比
+- 28 vLLM 部署实战与参数调优
+- 29 SGLang 高性能推理落地
+- 30 TensorRT-LLM 固化与加速
+- 31 模型量化实操
+- 32 模型剪枝与蒸馏压缩
+- 33 KV Cache 优化与上下文窗口拓展
+- 34 流式推理封装与高并发服务化</p>
+<p>第 4 阶段·高阶推理编译器极致优化
+- 35 推理编译器核心原理
+- 36 算子融合与计算图编译
+- 37 动态 shape 与显存编译器优化
+- 38 Speculative Decoding 投机推理进阶
+- 39 批量调度与并行深度适配
+- 40 内核重构与编译级量化</p>
+<p>第 5 阶段·全栈工程联调与项目落地
+- 41 全链路串联：数据到上线一体化流程
+- 42 领域大模型定制化落地
+- 43 高并发生产适配与端侧部署
+- 44 模型迭代升级与性能对标评测
+- 45 线上问题闭环排查
+- 46 工程化最佳实践汇总（手册终章）</p>
+<hr />
+<p><em>本文由 Voice前沿 出品 · 转载注明出处 · 下一篇：第 05 章 数据清洗规范与脏数据剔除</em></p>
+</article>
+<nav class="prevnext"><a href="ch03.html">← 第 03 章 【LLM全栈工程·第03章】预训练到底在练什么？整体架构、训练逻辑与关键概念</a><a href="ch05.html" style="text-align:right">第 05 章 【LLM全栈工程·第05章】数据清洗规范与脏数据剔除：先认识“脏”长什么样 →</a></nav>
+</main>
+<footer class="wrap"><p>LLM 全栈工程 · Voice前沿 出品 · 46 章连载 · 收藏即手册</p></footer>
+</body>
+</html>

@@ -1,0 +1,410 @@
+# 【LLM全栈工程·第29章】SGLang 高性能推理落地：前缀复用与结构化输出
+
+> 本篇为「LLM全栈工程」连载第 29 章（Voice前沿）。主标题以上为准；备选标题（供运营选用，不进正文）：① 长 System Prompt 场景的吞吐神器：SGLang 实战；② RadixAttention 到底省了什么：SGLang 原理与压测；③ 多轮、Agent、RAG 场景的推理框架新选择。
+
+---
+
+## 单篇内容卡（排版本忽略）
+
+| 字段 | 内容 |
+|---|---|
+| 章节定位 | 「基础部署与推理优化」第 3 篇：SGLang 部署与调优，重点覆盖前缀复用与结构化输出场景 |
+| 适用场景 | 个人学习（对比实验）；小团队 Agent/RAG 服务；企业高前缀复用流量 |
+| 核心知识点 | RadixAttention；SGLang 启动参数；结构化输出；前缀命中率；与 vLLM 的对比方法 |
+| 技术选型 | vLLM vs SGLang 的适用边界；何时迁移 |
+| 分步实操 | 起 SGLang 服务 → 共享前缀压测 → 标准压测 → 与 vLLM 对比 → 定稿 |
+| 参数详解 | mem-fraction-static/tp-size/dp-size/prefill 相关/缓存开关 |
+| 踩坑排查 | 版本漂移、模型不支持、前缀不一致命中率 0、显存预留过高、API 差异 |
+| 进阶优化 | 结构化输出、Agent 前缀工程、投机解码、与 vLLM 混合路由 |
+| 本章 TOP3 | 见文末 |
+| 下章预告 | 第 30 章：TensorRT-LLM 固化与加速 |
+
+---
+
+## 01 开篇导语
+
+如果你的流量有一个特征——**大量请求共享同一段前缀**（长 system prompt、RAG 固定知识头、Agent 工具说明、多轮历史），那 vLLM 可能不是最优解。
+
+SGLang 的 RadixAttention 把 KV Cache 做成“前缀树”：相同前缀只算一次，后续请求直接复用。实测这类场景下，SGLang 的吞吐常比通用框架高 30%–数倍（视前缀命中率而定）。它还内置结构化输出支持，很适合“既要快又要格式稳”的生产场景。
+
+本章讲清楚：
+
+1. RadixAttention 的原理与适用边界；
+2. SGLang 启动与关键参数；
+3. 怎么用“共享前缀压测”科学对比 vLLM 与 SGLang。
+
+> 一句话记住本章：**SGLang 的收益来自“前缀命中率”——先量化你的流量前缀命中率，再决定要不要迁移；别为 5% 的命中率换框架。**
+
+---
+
+## 02 白话原理：RadixAttention 在省什么
+
+### 2.1 普通框架的重复劳动
+
+每次请求都要对 prompt 做 prefill（计算前缀的 KV）。如果 1000 个请求共享同一个 2000 token 的 system prompt，普通框架要重复算 1000 遍——这笔账很贵。
+
+### 2.2 SGLang 的前缀树
+
+SGLang 把“文本前缀→KV”按树结构缓存：
+
+- 新请求先沿树找最长匹配前缀，直接复用 KV；
+- 只对“未命中部分”做 prefill；
+- 缓存在请求间动态共享与淘汰（类似 LRU）。
+
+**命中条件很严格**：前缀必须 token 级完全一致（多一个空格都可能 miss）——所以“固定 system + 动态提问”是 SGLang 的理想流量，而“每次 prompt 都随机拼”则几乎没有收益。
+
+### 2.3 结构化输出
+
+SGLang 支持把输出约束成合法 JSON/特定语法（grammar 约束解码）——生成过程每一步都只允许符合语法的 token，格式零失误且通常比“生成后解析重试”更快。
+
+> 记忆锚点：**RadixAttention 让“相同前缀只算一次”；命中率=流量里可复用前缀的占比，是 SGLang 选型的第一指标。**
+
+## 03 启动与核心参数
+
+### 3.1 最小启动
+
+~~~bash
+pip install sglang   # 依赖（如 flashinfer）以官方安装文档为准
+
+python -m sglang.launch_server \
+  --model-path models/helpdesk-sft-merged \
+  --host 0.0.0.0 \
+  --port 8000 \
+  --mem-fraction-static 0.85 \
+  --tp-size 1
+~~~
+
+验证：
+
+~~~bash
+curl http://localhost:8000/health
+curl http://localhost:8000/v1/models
+~~~
+
+> SGLang 迭代快，CLI 参数与默认值随版本变化；生产使用前以官方文档与 vllm serve --help 类似的帮助输出为准（此处给出语义正确的基线）。
+
+### 3.2 核心参数
+
+| 参数 | 作用 | 参考 |
+|---|---|---|
+| --mem-fraction-static | 静态显存占比 | 0.80–0.90 |
+| --tp-size | 张量并行卡数 | 1–8（需 NVLink） |
+| --dp-size | 数据并行副本数 | 1–N（同模型多副本分摊流量） |
+| --max-prefill-tokens | 单次 prefill 上限 | 4096–16384 |
+| --chunked-prefill-size | prefill 分块大小 | 与 max-prefill 配套 |
+| --schedule-policy | 调度策略 | 默认即可，特殊场景再调 |
+| --disable-radix-cache | 关前缀缓存 | 调试/低命中场景用 |
+| --log-level | 日志级别 | info/debug |
+
+### 3.3 OpenAI 兼容与结构化输出
+
+~~~python
+from openai import OpenAI
+client = OpenAI(base_url="http://localhost:8000/v1", api_key="EMPTY")
+
+# 普通对话
+resp = client.chat.completions.create(
+    model="helpdesk",
+    messages=[{"role": "user", "content": "打印机连不上怎么办？"}],
+)
+print(resp.choices[0].message.content)
+~~~
+
+结构化输出示例（字段与版本相关，生产前验证）：
+
+~~~python
+resp = client.chat.completions.create(
+    model="helpdesk",
+    messages=[{"role": "user", "content": "把打印机处理流程输出为 JSON：title 和 steps"}],
+    response_format={"type": "json_object"},
+)
+print(resp.choices[0].message.content)
+~~~
+
+> 提示：结构化输出若由“生成后解析+重试”实现会浪费 token 与时延；SGLang 的约束解码在生成期保证语法，但只对“可被语法描述的格式”有效。
+
+## 05 分步实操：SGLang vs vLLM 前缀压测（约 40 分钟）
+
+### Step 1 共享前缀压测脚本（10 分钟）
+
+保存 scripts/bench_prefix.py：
+
+~~~python
+# scripts/bench_prefix.py —— 共享长前缀压测（前缀缓存场景专用）
+# 用法：python bench_prefix.py <名称> <base_url> <并发> <总请求>
+import concurrent.futures
+import json
+import pathlib
+import statistics
+import sys
+import time
+
+from openai import OpenAI
+
+name = sys.argv[1]
+base_url = sys.argv[2]
+concurrency = int(sys.argv[3]) if len(sys.argv) > 3 else 8
+total = int(sys.argv[4]) if len(sys.argv) > 4 else 32
+root = pathlib.Path(__file__).resolve().parent.parent
+
+# 构造约 3000+ 字固定前缀（公司知识库规则重复展开，仅压测用）
+prefix_unit = "公司 IT 帮助台规定：打印机故障先检查电源与网络；WiFi 使用 Corp-WiFi；VPN 锁定 30 分钟；邮箱超 90% 需清理。"
+PREFIX = prefix_unit * 40
+SUFFIXES = [
+    "打印机连不上怎么办？",
+    "公司 WiFi 连不上怎么办？",
+    "VPN 账号被锁定怎么办？",
+    "邮箱容量超了怎么办？",
+    "打印机卡纸怎么处理？",
+    "我连不上公司 WiFi，怎么排查？",
+][:6]
+
+def run_once(i):
+    client = OpenAI(base_url=base_url, api_key="EMPTY")
+    question = SUFFIXES[i % len(SUFFIXES)]
+    start = time.time()
+    first_ts = None
+    chars = 0
+    stream = client.chat.completions.create(
+        model="helpdesk",
+        messages=[
+            {"role": "system", "content": PREFIX},
+            {"role": "user", "content": question},
+        ],
+        max_tokens=150,
+        temperature=0.2,
+        stream=True,
+    )
+    for chunk in stream:
+        if first_ts is None:
+            first_ts = time.time()
+        delta = chunk.choices[0].delta.content
+        if delta:
+            chars += len(delta)
+    end = time.time()
+    return {"ttft": first_ts - start if first_ts else end - start,
+            "total": end - start, "chars": chars}
+
+for _ in range(2):
+    run_once(0)
+
+results = []
+with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) as pool:
+    for res in pool.map(run_once, range(total)):
+        results.append(res)
+
+def pct(values, p):
+    ordered = sorted(values)
+    return ordered[min(len(ordered) - 1, int(len(ordered) * p))]
+
+report = {
+    "name": name, "prefix_chars": len(PREFIX), "concurrency": concurrency, "total": total,
+    "ttft_p50_ms": round(pct([r["ttft"] for r in results], 0.5) * 1000, 1),
+    "ttft_p95_ms": round(pct([r["ttft"] for r in results], 0.95) * 1000, 1),
+    "total_avg_ms": round(statistics.mean(r["total"] for r in results) * 1000, 1),
+    "chars_per_sec": round(sum(r["chars"] for r in results) / max(1e-9, sum(r["total"] for r in results)), 1),
+}
+out = root / "logs" / ("bench_prefix_" + name + ".json")
+with open(out, "w", encoding="utf-8") as f:
+    json.dump(report, f, ensure_ascii=False, indent=2)
+print(json.dumps(report, ensure_ascii=False, indent=2))
+~~~
+
+运行检查（先起任一服务）：
+
+~~~bash
+python scripts/bench_prefix.py demo http://localhost:8000/v1 4 8
+~~~
+
+### Step 2 双框架同模型对比（25 分钟）
+
+先起两个服务（同模型 helpdesk-sft-merged）：
+
+~~~bash
+# vLLM（开 prefix caching，8000 端口）
+vllm serve models/helpdesk-sft-merged --served-model-name helpdesk --port 8000 --max-model-len 8192 --gpu-memory-utilization 0.90 --enable-prefix-caching
+
+# SGLang（8001 端口）
+python -m sglang.launch_server --model-path models/helpdesk-sft-merged --port 8001 --mem-fraction-static 0.85
+~~~
+
+分别跑“普通压测”与“共享前缀压测”：
+
+~~~bash
+# 普通流量（第 27 章脚本）
+python scripts/bench_frameworks.py vllm http://localhost:8000/v1 8 32
+python scripts/bench_frameworks.py sglang http://localhost:8001/v1 8 32
+
+# 共享前缀流量（本章脚本）
+python scripts/bench_prefix.py vllm http://localhost:8000/v1 8 32
+python scripts/bench_prefix.py sglang http://localhost:8001/v1 8 32
+~~~
+
+### Step 3 对比表与结论（10 分钟）
+
+| 场景 | vLLM | SGLang | 差异 |
+|---|---|---|---|
+| 普通流量 TTFT p95 | ? | ? | ? |
+| 普通流量吞吐 | ? | ? | ? |
+| 前缀流量 TTFT p95 | ? | ? | ? |
+| 前缀流量吞吐 | ? | ? | ? |
+
+**决策规则**：
+
+1. 前缀流量下 SGLang 明显更快 → 你的流量适合 SGLang，评估迁移；
+2. 两者接近 → 维持 vLLM（生态与团队熟悉度也是成本）；
+3. 前缀命中率低 → 先做“前缀工程”（统一 system、固定知识头），再考虑框架；
+4. 记录框架版本与 GPU 型号后归档：
+
+~~~bash
+cd llm-demo
+git add scripts logs
+git commit -m "sglang: prefix bench vs vllm (same model/GPU)"
+git tag sglang-bench-v1
+~~~
+
+> 生产建议：如果最终混用，用网关按“请求是否共享前缀”路由到 vLLM 或 SGLang（第 27 章进阶优化提到的框架路由）。
+
+## 06 参数详解：SGLang 生产配置速查
+
+| 场景 | 建议 |
+|---|---|
+| 单卡 7B | mem-fraction-static 0.85，tp-size 1 |
+| 长 system + RAG | 前缀文本规范化（固定顺序/无随机空格），命中率目标 >70% |
+| Agent 多轮 | 历史按固定模板拼接；工具说明放 system 固定段 |
+| 结构化输出 | 用 response_format/grammar，别生成后解析重试 |
+| 多卡 | tp-size=2~4（NVLink）；纯扩容用 dp-size |
+
+---
+
+## 07 高频踩坑排查
+
+**坑 1：前缀不一致，命中率 0**
+症状：SGLang 没比 vLLM 快，缓存根本没命中。
+解法：检查前缀是否 token 级一致（空格/换行/全半角）；看服务端缓存命中指标。
+
+**坑 2：版本漂移**
+症状：教程命令跑不通，参数名变了。
+解法：以官方文档+launch_server --help 为准；锁版本进 requirements。
+
+**坑 3：模型架构不支持**
+症状：启动报错或生成异常。
+解法：查官方支持列表；不支持的模型继续用 vLLM。
+
+**坑 4：mem-fraction-static 过高**
+症状：加载后 OOM 或缓存空间不足。
+解法：0.80–0.90 起步，观察实际占用再调。
+
+**坑 5：把 SGLang 当万能**
+症状：普通短请求流量也迁移，收益≈0，徒增维护。
+解法：先量化前缀命中率与共享比例，再决定迁移。
+
+**坑 6：结构化输出依赖版本**
+症状：response_format 字段不生效。
+解法：查版本支持；用官方 grammar 示例先验证再上线。
+
+**坑 7：压测不公平**
+症状：vLLM 没开 prefix caching 就与 SGLang 比。
+解法：vLLM 开 --enable-prefix-caching，同模型同量化同 prompt 再比。
+
+---
+
+## 08 进阶优化：SGLang 的进化方向
+
+**① 前缀工程**：把 system/知识头/工具说明做成“规范前缀模板”，让命中率最大化——这是 SGLang 收益的第一杠杆。
+
+**② Agent 场景专项**：工具调用说明 + 历史消息固定模板，配合结构化输出，Agent 循环的重复 prefill 大幅减少。
+
+**③ 投机解码**：SGLang 支持 speculative decoding，长输出场景在缓存收益之上再降时延（第 38 章）。
+
+**④ 混合路由**：网关按“是否共享前缀/是否需要结构化输出”路由 vLLM 与 SGLang，各自发挥强项。
+
+**⑤ 与 RL 训练联动**：SGLang 也被用于部分 RL 框架的 rollout 服务；训练与推理共用一套前缀缓存基建，可统一优化。
+
+---
+
+## 09 本章核心总结（TOP3）
+
+**TOP1**：SGLang 的杀手锏是 RadixAttention 前缀树缓存：相同前缀只 prefill 一次；收益大小由“前缀命中率”决定，迁移前先量化流量。
+
+**TOP2**：启动与调参围绕 mem-fraction-static/tp/dp/prefill 展开；前缀必须 token 级一致（规范化 system），结构化输出用约束解码而非事后解析。
+
+**TOP3**：对比要公平：vLLM 开 prefix caching、同模型同量化同 prompt，分“普通流量/前缀流量”两组压测；数据说话，命中率低就留在 vLLM。
+
+---
+
+## 10 连载衔接
+
+上一章（第 28 章）把 vLLM 调到生产级；本章看清了 SGLang 的适用边界与实战参数——前缀类流量有了更优解。
+
+下一章走向“极致固化”：【第 30 章】TensorRT-LLM 固化与加速。把模型编译成 NVIDIA engine，时延还能再压一截。
+
+---
+
+## 11 话题标签与系列目录索引
+
+话题标签：**#LLM全栈工程 #SGLang #RadixAttention #前缀缓存 #结构化输出 #工程实战**（Voice前沿 出品，欢迎收藏追更）
+
+**系列目录（46 章，随连载持续更新）**
+
+第 0 阶段·开篇引路
+- 01 一条大模型生产线全程发生了什么
+- 02 2 小时跑通最小闭环
+- 03 预训练到底在练什么
+
+第 1 阶段·预训练工程·数据核心层
+- 04 数据管道从零构建
+- 05 数据清洗规范与脏数据剔除
+- 06 文本过滤实战
+- 07 数据去重算法
+- 08 敏感数据脱敏
+- 09 数据质量打分体系
+- 10 领域专属数据构建
+- 11 增量预训练方案
+- 12 预训练超参选型与硬件适配
+- 13 断点续训、收敛判断与失败排查
+
+第 2 阶段·微调与对齐体系
+- 14 全维度微调技术拆解
+- 15 SFT 监督微调实战
+- 16 SFT 数据集构建与标注规范
+- 17 微调模板设计
+- 18 微调超参调优策略
+- 19 过拟合、欠拟合与灾难遗忘
+- 20 微调效果评估体系
+- 21 多轮对话微调专项
+- 22 模型蒸馏实战
+- 23 奖励模型训练
+- 24 RLHF/PPO 工程落地
+- 25 RLAIF：AI 反馈自动对齐
+- 26 小样本与领域自适应微调
+
+第 3 阶段·基础部署与推理优化
+- 27 部署框架横向对比
+- 28 vLLM 部署实战与参数调优
+- 29 SGLang 高性能推理落地（本篇）
+- 30 TensorRT-LLM 固化与加速
+- 31 模型量化实操
+- 32 模型剪枝与蒸馏压缩
+- 33 KV Cache 优化与上下文窗口拓展
+- 34 流式推理封装与高并发服务化
+
+第 4 阶段·高阶推理编译器极致优化
+- 35 推理编译器核心原理
+- 36 算子融合与计算图编译
+- 37 动态 shape 与显存编译器优化
+- 38 Speculative Decoding 投机推理进阶
+- 39 批量调度与并行深度适配
+- 40 内核重构与编译级量化
+
+第 5 阶段·全栈工程联调与项目落地
+- 41 全链路串联：数据到上线一体化流程
+- 42 领域大模型定制化落地
+- 43 高并发生产适配与端侧部署
+- 44 模型迭代升级与性能对标评测
+- 45 线上问题闭环排查
+- 46 工程化最佳实践汇总（手册终章）
+
+---
+
+*本文由 Voice前沿 出品 · 转载注明出处 · 下一篇：第 30 章 TensorRT-LLM 固化与加速*

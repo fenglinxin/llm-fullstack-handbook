@@ -1,0 +1,656 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>【LLM全栈工程·第19章】过拟合、欠拟合与灾难遗忘：症状、归因与解法 · LLM 全栈工程</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header"><div class="wrap">
+<a class="brand" href="../index.html">LLM 全栈工程<small>LLM 工业级全栈工程落地手册 · 46 章</small></a>
+<nav><a href="../index.html">目录</a><a href="https://github.com/">GitHub 仓库</a></nav>
+</div></header>
+<main class="wrap">
+<nav class="crumbs"><a href="../index.html">全部章节</a> / 【LLM全栈工程·第19章】过拟合、欠拟合与灾难遗忘：症状、归因与解法</nav>
+<details class="toc-box"><summary>本章目录</summary><div class="toc">
+<ul>
+<li><a href="#_1">单篇内容卡（排版本忽略）</a></li>
+<li><a href="#01">01 开篇导语</a></li>
+<li><a href="#02">02 白话原理：三张曲线图</a><ul>
+<li><a href="#21">2.1 过拟合：背题而不是学会</a></li>
+<li><a href="#22">2.2 欠拟合：还没学会</a></li>
+<li><a href="#23">2.3 灾难遗忘：学了新的忘了旧的</a></li>
+</ul>
+</li>
+<li><a href="#03">03 解法清单：按归因顺序用药</a><ul>
+<li><a href="#31">3.1 过拟合的解法（按优先级）</a></li>
+<li><a href="#32">3.2 欠拟合的解法（按优先级）</a></li>
+<li><a href="#33">3.3 灾难遗忘的解法</a></li>
+</ul>
+</li>
+<li><a href="#04">04 技术选型：诊断与防控工具</a></li>
+<li><a href="#05-30">05 分步实操：自动诊断拟合状态（30 分钟）</a><ul>
+<li><a href="#step-1-5">Step 1 生成三份“拟合状态”样例日志（5 分钟）</a></li>
+<li><a href="#step-2-10">Step 2 写自动诊断脚本（10 分钟）</a></li>
+<li><a href="#step-3-5">Step 3 跑诊断（5 分钟）</a></li>
+</ul>
+</li>
+<li><a href="#06-10">06 灾难遗忘回归检查（10 分钟，必做）</a></li>
+<li><a href="#07">07 参数详解：诊断与防控速查</a></li>
+<li><a href="#08">08 高频踩坑排查</a></li>
+<li><a href="#09">09 进阶优化：拟合与遗忘的进化方向</a></li>
+<li><a href="#10-top3">10 本章核心总结（TOP3）</a></li>
+<li><a href="#11">11 连载衔接</a></li>
+<li><a href="#12">12 话题标签与系列目录索引</a></li>
+</ul>
+</div>
+</details>
+<article class="article">
+<h1 id="llm19">【LLM全栈工程·第19章】过拟合、欠拟合与灾难遗忘：症状、归因与解法</h1>
+<blockquote>
+<p>本篇为「LLM全栈工程」连载第 19 章（Voice前沿）。主标题以上为准；备选标题（供运营选用，不进正文）：① train loss 降、val loss 涨：过拟合的识别与解法；② 模型学了领域忘了通用？灾难遗忘的度量与缓解；③ 用曲线说话：欠拟合/过拟合/遗忘的三张诊断图。</p>
+</blockquote>
+<hr />
+<h2 id="_1">单篇内容卡（排版本忽略）</h2>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>章节定位</td>
+<td>「微调与对齐体系」第 6 篇：建立拟合状态诊断与灾难遗忘防控的完整方法</td>
+</tr>
+<tr>
+<td>适用场景</td>
+<td>个人学习（小数据微调）；小团队效果调优；企业模型迭代中的回归控制</td>
+</tr>
+<tr>
+<td>核心知识点</td>
+<td>过拟合/欠拟合的曲线特征；归因顺序；解法清单；灾难遗忘的度量与缓解</td>
+</tr>
+<tr>
+<td>技术选型</td>
+<td>早停/正则/容量控制/数据增强/回放/EWC 的适用边界</td>
+</tr>
+<tr>
+<td>分步实操</td>
+<td>生成三份“拟合状态”样例日志 → 自动诊断脚本 → 对真实训练日志诊断 → 遗忘回归检查</td>
+</tr>
+<tr>
+<td>参数详解</td>
+<td>gap 阈值、趋势窗口、dropout/weight decay、回放比例</td>
+</tr>
+<tr>
+<td>踩坑排查</td>
+<td>用噪声当趋势、忽视 val 集大小、遗忘测错集、先调参后查数据</td>
+</tr>
+<tr>
+<td>进阶优化</td>
+<td>数据增强与合成、多任务回放、EWC/L2、LoRA 路由隔离、持续学习</td>
+</tr>
+<tr>
+<td>本章 TOP3</td>
+<td>见文末</td>
+</tr>
+<tr>
+<td>下章预告</td>
+<td>第 20 章：微调效果评估体系</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="01">01 开篇导语</h2>
+<p>微调最让人困惑的时刻：训练 loss 一路下降，看着很完美——但一测 held-out 题，效果没涨甚至更差。</p>
+<p>这不是模型“坏”了，而是它陷入了三种典型状态之一：<strong>过拟合</strong>（背会了训练题）、<strong>欠拟合</strong>（根本没学会）、<strong>灾难遗忘</strong>（学了新的忘了旧的）。三种状态的症状、成因和解法完全不同，用错药比不用药更糟。</p>
+<p>本章给你三样工具：</p>
+<ol>
+<li><strong>三张“曲线图”</strong>：train/val loss 的形态对应哪种状态；</li>
+<li><strong>一张归因顺序表</strong>：先查数据、再查容量、最后查正则；</li>
+<li><strong>一套遗忘防控</strong>：回放、低 LR、隔离 adapter 与评测闸门。</li>
+</ol>
+<p>交付物：一个能自动诊断“过拟合/欠拟合/健康”的训练日志分析脚本，以及一套灾难遗忘回归检查流程。</p>
+<blockquote>
+<p>一句话记住本章：<strong>train 与 val 的 gap 是照妖镜——gap 变大是过拟合，双双不降是欠拟合，旧任务掉分是新任务带来的遗忘。</strong></p>
+</blockquote>
+<hr />
+<h2 id="02">02 白话原理：三张曲线图</h2>
+<h3 id="21">2.1 过拟合：背题而不是学会</h3>
+<table>
+<thead>
+<tr>
+<th>现象</th>
+<th>曲线特征</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>train loss 持续下降</td>
+<td>↓</td>
+</tr>
+<tr>
+<td>val loss 先降后升</td>
+<td>U 形</td>
+</tr>
+<tr>
+<td>gap（val-train）不断拉大</td>
+<td>↗</td>
+</tr>
+</tbody>
+</table>
+<p>原因：模型容量（rank/参数量）大于数据信息量，或同一批数据看得太多，把训练集的噪声与特例也记住了。</p>
+<p><strong>SFT 里的典型表现</strong>：训练题答得一字不差，换个问法就崩；回答里出现训练集特有的错误或风格。</p>
+<h3 id="22">2.2 欠拟合：还没学会</h3>
+<table>
+<thead>
+<tr>
+<th>现象</th>
+<th>曲线特征</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>train loss 高且下降慢</td>
+<td>平缓 ↓</td>
+</tr>
+<tr>
+<td>val loss 与 train 接近但都高</td>
+<td>平行</td>
+</tr>
+<tr>
+<td>评测分没有明显提升</td>
+<td>—</td>
+</tr>
+</tbody>
+</table>
+<p>原因：容量不够、LR 不合适、数据格式问题（模板错/标签错）、训练步数太少。</p>
+<h3 id="23">2.3 灾难遗忘：学了新的忘了旧的</h3>
+<table>
+<thead>
+<tr>
+<th>现象</th>
+<th>曲线特征</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>新任务 loss/评测涨</td>
+<td>↑</td>
+</tr>
+<tr>
+<td>旧任务（通用/历史领域）评测掉</td>
+<td>↓</td>
+</tr>
+</tbody>
+</table>
+<p>原因：继续训练时新分布覆盖旧分布，参数被“冲走”。微调小数据时表现为“通用能力回退”（例如只会按公司格式说话，不会写代码了）。</p>
+<blockquote>
+<p>识别口诀：<strong>看 gap 判过拟合，看绝对高度判欠拟合，看旧任务评测判遗忘——三条曲线配合 held-out 评测一起看。</strong></p>
+</blockquote>
+<h2 id="03">03 解法清单：按归因顺序用药</h2>
+<h3 id="31">3.1 过拟合的解法（按优先级）</h3>
+<table>
+<thead>
+<tr>
+<th>优先级</th>
+<th>手段</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>查数据质量与重复</td>
+<td>重复/噪声样本是过拟合第一来源（先做去重）</td>
+</tr>
+<tr>
+<td>2</td>
+<td>加数据（真实/合成）</td>
+<td>多样性是过拟合的天敌</td>
+</tr>
+<tr>
+<td>3</td>
+<td>降容量</td>
+<td>LoRA rank 减半；缩小 target modules</td>
+</tr>
+<tr>
+<td>4</td>
+<td>早停</td>
+<td>用 val loss/评测选中间 checkpoint</td>
+</tr>
+<tr>
+<td>5</td>
+<td>加正则</td>
+<td>dropout 0.05→0.1、weight decay</td>
+</tr>
+<tr>
+<td>6</td>
+<td>混入通用数据</td>
+<td>SFT 中加 10%–30% 通用指令保持泛化</td>
+</tr>
+</tbody>
+</table>
+<h3 id="32">3.2 欠拟合的解法（按优先级）</h3>
+<table>
+<thead>
+<tr>
+<th>优先级</th>
+<th>手段</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>查数据格式/标签</td>
+<td>模板错、答案错会“学不会”</td>
+</tr>
+<tr>
+<td>2</td>
+<td>调 LR</td>
+<td>太低学不动；扫 1e-4~3e-4</td>
+</tr>
+<tr>
+<td>3</td>
+<td>加容量</td>
+<td>rank 16→32/64，或换全参</td>
+</tr>
+<tr>
+<td>4</td>
+<td>加训练量</td>
+<td>epoch 3→5（盯 val）</td>
+</tr>
+<tr>
+<td>5</td>
+<td>换更强底座</td>
+<td>7B→14B 或领域预训练底座</td>
+</tr>
+</tbody>
+</table>
+<h3 id="33">3.3 灾难遗忘的解法</h3>
+<table>
+<thead>
+<tr>
+<th>手段</th>
+<th>原理</th>
+<th>代价</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>通用回放（replay）</td>
+<td>训练时混入旧任务数据</td>
+<td>需要保留旧数据样本</td>
+</tr>
+<tr>
+<td>低学习率</td>
+<td>减少对旧参数的冲击</td>
+<td>新任务学得慢</td>
+</tr>
+<tr>
+<td>LoRA 隔离</td>
+<td>每个任务独立 adapter</td>
+<td>推理要路由</td>
+</tr>
+<tr>
+<td>L2/EWC 正则</td>
+<td>限制参数偏离底座</td>
+<td>实现复杂、超参敏感</td>
+</tr>
+<tr>
+<td>评测闸门</td>
+<td>通用评测掉分即回滚</td>
+<td>需要评测集</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>归因顺序铁律：<strong>先查数据（质量/模板/重复）→ 再查容量 → 最后才调正则与 LR</strong>。90% 的“过拟合”其实是数据问题。</p>
+</blockquote>
+<hr />
+<h2 id="04">04 技术选型：诊断与防控工具</h2>
+<table>
+<thead>
+<tr>
+<th>需求</th>
+<th>推荐</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>曲线可视化</td>
+<td>WandB/TensorBoard/自绘</td>
+<td>必须有 train 与 val 两条线</td>
+</tr>
+<tr>
+<td>自动诊断</td>
+<td>本章 diagnose_fit.py 或自写规则</td>
+<td>规则简单可解释</td>
+</tr>
+<tr>
+<td>遗忘度量</td>
+<td>固定通用评测集（锁版本）</td>
+<td>每次实验必跑</td>
+</tr>
+<tr>
+<td>回放数据</td>
+<td>通用语料高分桶 + 旧领域样本</td>
+<td>与任务数据同批次混合</td>
+</tr>
+<tr>
+<td>防遗忘正则</td>
+<td>EWC/L2（全参时）</td>
+<td>LoRA 场景优先级低</td>
+</tr>
+</tbody>
+</table>
+<h2 id="05-30">05 分步实操：自动诊断拟合状态（30 分钟）</h2>
+<h3 id="step-1-5">Step 1 生成三份“拟合状态”样例日志（5 分钟）</h3>
+<p>保存 scripts/make_fit_samples.py：</p>
+<pre><code class="language-python"># scripts/make_fit_samples.py —— 生成 healthy/overfit/underfit 三份样例日志
+import json
+import math
+import pathlib
+import random
+
+root = pathlib.Path(__file__).resolve().parent.parent
+log_dir = root / &quot;logs&quot;
+log_dir.mkdir(parents=True, exist_ok=True)
+random.seed(3)
+
+def write_log(name, train_fn, val_fn):
+    rows = []
+    for step in range(101):
+        train_loss = train_fn(step)
+        val_loss = val_fn(step) if step % 10 == 0 else None
+        rows.append({&quot;step&quot;: step, &quot;train_loss&quot;: round(train_loss, 4), &quot;val_loss&quot;: round(val_loss, 4) if val_loss else None})
+    path = log_dir / name
+    with open(path, &quot;w&quot;, encoding=&quot;utf-8&quot;) as f:
+        for row in rows:
+            f.write(json.dumps(row, ensure_ascii=False) + &quot;\n&quot;)
+    print(&quot;written:&quot;, path)
+
+# 健康：train/val 同步下降，gap 稳定
+write_log(&quot;fit_healthy.jsonl&quot;,
+          lambda s: 2.5 * math.exp(-s / 50.0) + 0.4,
+          lambda s: 2.5 * math.exp(-s / 50.0) + 0.55)
+
+# 过拟合：train 一路降，val 先降后升
+write_log(&quot;fit_overfit.jsonl&quot;,
+          lambda s: 2.5 * math.exp(-s / 30.0) + 0.15,
+          lambda s: 2.0 * math.exp(-s / 45.0) + 0.5 + max(0, s - 50) * 0.012)
+
+# 欠拟合：train/val 都高且几乎不降
+write_log(&quot;fit_underfit.jsonl&quot;,
+          lambda s: 2.2 - s * 0.0025,
+          lambda s: 2.3 - s * 0.0020)
+</code></pre>
+<p>运行：</p>
+<pre><code class="language-bash">python scripts/make_fit_samples.py
+</code></pre>
+<h3 id="step-2-10">Step 2 写自动诊断脚本（10 分钟）</h3>
+<p>保存 scripts/diagnose_fit.py：</p>
+<pre><code class="language-python"># scripts/diagnose_fit.py —— 根据 train/val loss 曲线判断拟合状态
+# 用法：python diagnose_fit.py logs/fit_healthy.jsonl
+import json
+import pathlib
+import statistics
+import sys
+
+def slope(xs, ys):
+    n = len(xs)
+    if n &lt; 2:
+        return 0.0
+    sx = sum(xs); sy = sum(ys)
+    sxx = sum(x * x for x in xs)
+    sxy = sum(x * y for x, y in zip(xs, ys))
+    denom = n * sxx - sx * sx
+    if abs(denom) &lt; 1e-9:
+        return 0.0
+    return (n * sxy - sx * sy) / denom
+
+path = sys.argv[1] if len(sys.argv) &gt; 1 else &quot;logs/fit_healthy.jsonl&quot;
+rows = [json.loads(line) for line in open(path, encoding=&quot;utf-8&quot;)]
+train_pts = [(r[&quot;step&quot;], r[&quot;train_loss&quot;]) for r in rows if r.get(&quot;train_loss&quot;) is not None]
+val_pts = [(r[&quot;step&quot;], r[&quot;val_loss&quot;]) for r in rows if r.get(&quot;val_loss&quot;) is not None]
+
+if len(val_pts) &lt; 3:
+    print(&quot;数据不足：val 点少于 3 个，无法诊断&quot;)
+    raise SystemExit
+
+# 首 20% 与末 30% 的均值
+def mean_of(points, ratio_start, ratio_end):
+    n = len(points)
+    seg = points[int(n * ratio_start):int(n * ratio_end)] or points[-1:]
+    return statistics.mean(p[1] for p in seg)
+
+train_first = mean_of(train_pts, 0.0, 0.2)
+train_last = mean_of(train_pts, 0.7, 1.0)
+val_first = mean_of(val_pts, 0.0, 0.2)
+val_last = mean_of(val_pts, 0.7, 1.0)
+val_slope = slope([p[0] for p in val_pts[-max(3, len(val_pts) // 3):]],
+                  [p[1] for p in val_pts[-max(3, len(val_pts) // 3):]])
+
+gap = val_last - train_last
+train_drop = train_first - train_last
+report = {&quot;file&quot;: path, &quot;train_first&quot;: round(train_first, 3), &quot;train_last&quot;: round(train_last, 3),
+          &quot;val_first&quot;: round(val_first, 3), &quot;val_last&quot;: round(val_last, 3),
+          &quot;gap_last&quot;: round(gap, 3), &quot;val_slope_last&quot;: round(val_slope, 5), &quot;train_drop&quot;: round(train_drop, 3)}
+
+if gap &gt; 0.4 and val_slope &gt; 0.0005:
+    report[&quot;diagnosis&quot;] = &quot;overfit&quot;
+    report[&quot;advice&quot;] = &quot;先查数据重复/噪声 -&gt; 降 rank -&gt; 早停 -&gt; 加 dropout&quot;
+elif train_drop &lt; 0.1 or (train_last &gt; 1.2 and val_last &gt; 1.3):
+    report[&quot;diagnosis&quot;] = &quot;underfit&quot;
+    report[&quot;advice&quot;] = &quot;先查模板/数据格式 -&gt; 调 LR -&gt; 加容量 -&gt; 加训练量&quot;
+else:
+    report[&quot;diagnosis&quot;] = &quot;healthy&quot;
+    report[&quot;advice&quot;] = &quot;曲线健康，继续用评测确认效果&quot;
+
+out = pathlib.Path(path).with_suffix(&quot;.diagnosis.json&quot;)
+with open(out, &quot;w&quot;, encoding=&quot;utf-8&quot;) as f:
+    json.dump(report, f, ensure_ascii=False, indent=2)
+print(json.dumps(report, ensure_ascii=False, indent=2))
+</code></pre>
+<h3 id="step-3-5">Step 3 跑诊断（5 分钟）</h3>
+<pre><code class="language-bash">python scripts/diagnose_fit.py logs/fit_healthy.jsonl
+python scripts/diagnose_fit.py logs/fit_overfit.jsonl
+python scripts/diagnose_fit.py logs/fit_underfit.jsonl
+</code></pre>
+<p>预期：healthy → healthy；overfit → overfit（gap 大且 val 末尾上行）；underfit → underfit（双高且几乎不降）。</p>
+<blockquote>
+<p>真实日志接入：把第 15 章 LlamaFactory 的 trainer_state.json 里 log_history 转成 {step,train_loss,val_loss} 的 JSONL（脚本 10 行），就能用同一套诊断规则。</p>
+</blockquote>
+<h2 id="06-10">06 灾难遗忘回归检查（10 分钟，必做）</h2>
+<p>每次 SFT/CPT 实验都要回答：<strong>通用能力掉了吗？</strong></p>
+<ol>
+<li>固定一份“通用冒烟集”（20–50 题：代码、数学、常识、写作各若干，锁版本）；</li>
+<li>微调前后各跑一遍（用第 15 章 sft_eval.py 的模式改造）；</li>
+<li>记录通过率变化：</li>
+</ol>
+<table>
+<thead>
+<tr>
+<th>模型</th>
+<th>领域题</th>
+<th>通用题</th>
+<th>结论</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>底座</td>
+<td>低</td>
+<td>高</td>
+<td>基线</td>
+</tr>
+<tr>
+<td>SFT 后</td>
+<td>高</td>
+<td>？</td>
+<td>通用掉 &gt;10% 即触发遗忘防控</td>
+</tr>
+</tbody>
+</table>
+<ol start="4">
+<li>如果通用掉分：先加通用回放（训练数据混 10%–30% 通用指令）→ 再降 LR → 仍不行换 LoRA 隔离/EWC（第 03 节）。</li>
+</ol>
+<blockquote>
+<p>灾难遗忘的“容忍线”按业务定：通用问答助手要求高（掉 2% 都难受），纯领域工具型 Agent 可以放宽。<strong>没有容忍线的回归检查，等于没有检查。</strong></p>
+</blockquote>
+<hr />
+<h2 id="07">07 参数详解：诊断与防控速查</h2>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>参考取值</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>gap 告警线</td>
+<td>val-train &gt; 0.3–0.5</td>
+<td>视任务 loss 量级标定</td>
+</tr>
+<tr>
+<td>val 趋势窗口</td>
+<td>末 20%–30% 的 val 点</td>
+<td>太短被噪声骗</td>
+</tr>
+<tr>
+<td>回放比例</td>
+<td>10%–30%</td>
+<td>通用保持与领域提升的平衡点</td>
+</tr>
+<tr>
+<td>dropout</td>
+<td>0.05–0.1</td>
+<td>过拟合时加</td>
+</tr>
+<tr>
+<td>weight decay</td>
+<td>0.01–0.1</td>
+<td>全参微调有效，LoRA 作用弱</td>
+</tr>
+<tr>
+<td>早停 patience</td>
+<td>3–10 个评测点</td>
+<td>防 val 噪声误停</td>
+</tr>
+<tr>
+<td>遗忘容忍线</td>
+<td>通用分掉 2%–10%</td>
+<td>按业务定并写进验收标准</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="08">08 高频踩坑排查</h2>
+<p><strong>坑 1：用几个点判断趋势</strong>
+症状：val loss 抖动一次就喊“过拟合”。
+解法：至少看末 20%–30% 的窗口斜率；先平滑再下结论。</p>
+<p><strong>坑 2：val 集太小</strong>
+症状：val 只有 5 条，曲线全是噪声。
+解法：val 至少 50–200 条（小数据可留 20% 但别少于 20 条），或做多次随机切分取平均。</p>
+<p><strong>坑 3：把“答案变短”当遗忘</strong>
+症状：模型领域化后回答风格变了，误判为能力丢失。
+解法：遗忘要用“固定任务集+固定评分”测，风格变化不是能力丢失；两者分开评估。</p>
+<p><strong>坑 4：先调参后查数据</strong>
+症状：过拟合调了一周 dropout，最后发现训练集里有 30% 重复。
+解法：归因顺序永远是数据→容量→正则。</p>
+<p><strong>坑 5：SFT 一点过拟合都没有</strong>
+症状：train/val 都好，但领域题还是不会——可能是没学会（欠拟合）或数据覆盖不足。
+解法：看领域 held-out 题本身；曲线健康不等于任务达标。</p>
+<p><strong>坑 6：遗忘检查用“会变的评测”</strong>
+症状：每次评测题不一样，无法对比。
+解法：评测集锁版本；变更评测集=重跑基线。</p>
+<p><strong>坑 7：只早停不选点</strong>
+症状：早停后拿“最后一步”模型上线。
+解法：用 val/评测最优的 checkpoint 上线；把 checkpoint 选择写进流程。</p>
+<hr />
+<h2 id="09">09 进阶优化：拟合与遗忘的进化方向</h2>
+<p><strong>① 数据增强与合成</strong>：对过拟合，用同义改写/模板扩展增加多样性（注意校验事实）；比单纯加 dropout 更治本。</p>
+<p><strong>② 多任务回放调度</strong>：把“通用+旧领域+新领域”按比例与课程调度混合，兼顾新任务速度与旧任务保持。</p>
+<p><strong>③ EWC/L2 防遗忘</strong>：全参继续训练时用 EWC 估计“重要参数”，限制其偏移；实现成本高，先在回放无效时再上。</p>
+<p><strong>④ LoRA 隔离与路由</strong>：每个领域/任务独立 adapter，互不覆盖；推理按意图路由或叠加——遗忘问题从结构上消失。</p>
+<p><strong>⑤ 持续学习流水线</strong>：新数据到达→自动回放训练→通用+领域双评测→达标才合并上线；把“防遗忘”变成例行 CI 式检查。</p>
+<hr />
+<h2 id="10-top3">10 本章核心总结（TOP3）</h2>
+<p><strong>TOP1</strong>：三态识别口诀：gap 拉大=过拟合，双双不降=欠拟合，旧任务掉分=灾难遗忘；曲线要与固定评测集配合看，不能只看 train loss。</p>
+<p><strong>TOP2</strong>：解法按归因顺序：过拟合先查数据再降容量加正则；欠拟合先查模板格式再调 LR 加容量；遗忘用回放+低 LR+LoRA 隔离，评测闸门兜底。</p>
+<p><strong>TOP3</strong>：遗忘回归是每次实验的必做项：固定通用冒烟集、定容忍线、SFT/CPT 前后对比；没有回归检查的微调，等于把模型质量交给运气。</p>
+<hr />
+<h2 id="11">11 连载衔接</h2>
+<p>上一章（第 18 章）建立了调参纪律；本章让你能读懂曲线、对症下药——主线工程的微调不再“盲调”，而是“诊断驱动”。</p>
+<p>下一章把“效果”这件事正式化：【第 20 章】微调效果评估体系：任务集、基准、消融与 LLM 裁判。怎么建评测集、怎么打分、怎么防止“评测过拟合”，是模型迭代的地基。</p>
+<hr />
+<h2 id="12">12 话题标签与系列目录索引</h2>
+<p>话题标签：<strong>#LLM全栈工程 #过拟合 #欠拟合 #灾难遗忘 #微调 #工程实战</strong>（Voice前沿 出品，欢迎收藏追更）</p>
+<p><strong>系列目录（46 章，随连载持续更新）</strong></p>
+<p>第 0 阶段·开篇引路
+- 01 一条大模型生产线全程发生了什么
+- 02 2 小时跑通最小闭环
+- 03 预训练到底在练什么</p>
+<p>第 1 阶段·预训练工程·数据核心层
+- 04 数据管道从零构建
+- 05 数据清洗规范与脏数据剔除
+- 06 文本过滤实战
+- 07 数据去重算法
+- 08 敏感数据脱敏
+- 09 数据质量打分体系
+- 10 领域专属数据构建
+- 11 增量预训练方案
+- 12 预训练超参选型与硬件适配
+- 13 断点续训、收敛判断与失败排查</p>
+<p>第 2 阶段·微调与对齐体系
+- 14 全维度微调技术拆解
+- 15 SFT 监督微调实战
+- 16 SFT 数据集构建与标注规范
+- 17 微调模板设计
+- 18 微调超参调优策略
+- 19 过拟合、欠拟合与灾难遗忘（本篇）
+- 20 微调效果评估体系
+- 21 多轮对话微调专项
+- 22 模型蒸馏实战
+- 23 奖励模型训练
+- 24 RLHF/PPO 工程落地
+- 25 RLAIF：AI 反馈自动对齐
+- 26 小样本与领域自适应微调</p>
+<p>第 3 阶段·基础部署与推理优化
+- 27 部署框架横向对比
+- 28 vLLM 部署实战与参数调优
+- 29 SGLang 高性能推理落地
+- 30 TensorRT-LLM 固化与加速
+- 31 模型量化实操
+- 32 模型剪枝与蒸馏压缩
+- 33 KV Cache 优化与上下文窗口拓展
+- 34 流式推理封装与高并发服务化</p>
+<p>第 4 阶段·高阶推理编译器极致优化
+- 35 推理编译器核心原理
+- 36 算子融合与计算图编译
+- 37 动态 shape 与显存编译器优化
+- 38 Speculative Decoding 投机推理进阶
+- 39 批量调度与并行深度适配
+- 40 内核重构与编译级量化</p>
+<p>第 5 阶段·全栈工程联调与项目落地
+- 41 全链路串联：数据到上线一体化流程
+- 42 领域大模型定制化落地
+- 43 高并发生产适配与端侧部署
+- 44 模型迭代升级与性能对标评测
+- 45 线上问题闭环排查
+- 46 工程化最佳实践汇总（手册终章）</p>
+<hr />
+<p><em>本文由 Voice前沿 出品 · 转载注明出处 · 下一篇：第 20 章 微调效果评估体系</em></p>
+</article>
+<nav class="prevnext"><a href="ch18.html">← 第 18 章 【LLM全栈工程·第18章】微调超参调优策略：rank/alpha/lr/epoch 与实验管理</a><a href="ch20.html" style="text-align:right">第 20 章 【LLM全栈工程·第20章】微调效果评估体系：任务集、基准、消融与 LLM 裁判 →</a></nav>
+</main>
+<footer class="wrap"><p>LLM 全栈工程 · Voice前沿 出品 · 46 章连载 · 收藏即手册</p></footer>
+</body>
+</html>

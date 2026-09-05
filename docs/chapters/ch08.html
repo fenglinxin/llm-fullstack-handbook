@@ -1,0 +1,634 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>【LLM全栈工程·第08章】敏感数据脱敏：PII 识别、脱敏策略与合规落地 · LLM 全栈工程</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header"><div class="wrap">
+<a class="brand" href="../index.html">LLM 全栈工程<small>LLM 工业级全栈工程落地手册 · 46 章</small></a>
+<nav><a href="../index.html">目录</a><a href="https://github.com/">GitHub 仓库</a></nav>
+</div></header>
+<main class="wrap">
+<nav class="crumbs"><a href="../index.html">全部章节</a> / 【LLM全栈工程·第08章】敏感数据脱敏：PII 识别、脱敏策略与合规落地</nav>
+<details class="toc-box"><summary>本章目录</summary><div class="toc">
+<ul>
+<li><a href="#_1">单篇内容卡（排版本忽略）</a></li>
+<li><a href="#01">01 开篇导语</a></li>
+<li><a href="#02-pii">02 白话原理：为什么 PII 必须“出不了训练集”</a><ul>
+<li><a href="#21-pii">2.1 PII 是什么</a></li>
+<li><a href="#22-pii">2.2 为什么模型会把 PII “背”出来</a></li>
+<li><a href="#23">2.3 脱敏的本质：在“可用性”与“隐私风险”之间找平衡</a></li>
+</ul>
+</li>
+<li><a href="#03-pii">03 PII 识别：三件套组合拳</a><ul>
+<li><a href="#31">3.1 识别方法对比</a></li>
+<li><a href="#32">3.2 关键技巧：识别要“带上下文、带校验”</a></li>
+</ul>
+</li>
+<li><a href="#04">04 脱敏策略与工具选型</a><ul>
+<li><a href="#41">4.1 策略表设计</a></li>
+<li><a href="#42">4.2 工具选型</a></li>
+</ul>
+</li>
+<li><a href="#05-safe-30">05 分步实操：给管道加上 safe 层（30 分钟）</a><ul>
+<li><a href="#step-1-pii-5">Step 1 注入含 PII 的样本（5 分钟）</a></li>
+<li><a href="#step-2-pii">Step 2 把 PII 样本走完“归一化 → 清洗 → 过滤 → 去重”</a></li>
+<li><a href="#step-3-15">Step 3 写识别 + 脱敏脚本（15 分钟）</a></li>
+<li><a href="#step-4-5">Step 4 跑脱敏 + 再识别测试（5 分钟）</a></li>
+<li><a href="#step-5-5">Step 5 人工抽检 + 打版本（5 分钟）</a></li>
+</ul>
+</li>
+<li><a href="#06">06 参数详解：脱敏配置速查</a></li>
+<li><a href="#07">07 高频踩坑排查</a></li>
+<li><a href="#08">08 进阶优化：脱敏体系的进化方向</a></li>
+<li><a href="#09-top3">09 本章核心总结（TOP3）</a></li>
+<li><a href="#10">10 连载衔接</a></li>
+<li><a href="#11">11 话题标签与系列目录索引</a></li>
+</ul>
+</div>
+</details>
+<article class="article">
+<h1 id="llm08pii">【LLM全栈工程·第08章】敏感数据脱敏：PII 识别、脱敏策略与合规落地</h1>
+<blockquote>
+<p>本篇为「LLM全栈工程」连载第 08 章（Voice前沿）。主标题以上为准；备选标题（供运营选用，不进正文）：① 训练数据里的身份证号、手机号，一个都不能进模型；② PII 识别与脱敏实战：正则、校验位、掩码与泛化；③ 脱敏不是打马赛克：识别率、误伤率与再识别攻击测试。</p>
+</blockquote>
+<hr />
+<h2 id="_1">单篇内容卡（排版本忽略）</h2>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>章节定位</td>
+<td>「预训练工程·数据核心层」第 6 篇：在数据进训练集之前完成敏感信息识别与脱敏</td>
+</tr>
+<tr>
+<td>适用场景</td>
+<td>个人学习（本地 PII 规则）；小团队处理工单/日志/客服语料；企业合规数据生产线</td>
+</tr>
+<tr>
+<td>核心知识点</td>
+<td>PII 类型；识别三件套（正则+校验位+Ner）；掩码/泛化/删除/假名化策略；脱敏质检与再识别测试</td>
+</tr>
+<tr>
+<td>技术选型</td>
+<td>正则+校验位 vs 开源 PII 框架（Presidio 类） vs LLM 识别 vs 商业 DLP</td>
+</tr>
+<tr>
+<td>分步实操</td>
+<td>在第 07 章 dedup 层后加 safe 层：注入含 PII 样本 → 识别 → 按策略脱敏 → 再识别测试 → 打版本</td>
+</tr>
+<tr>
+<td>参数详解</td>
+<td>各类型掩码规则、识别置信度、删除阈值、策略表结构</td>
+</tr>
+<tr>
+<td>踩坑排查</td>
+<td>只靠正则漏变体、校验位缺失误伤、掩码破坏格式、假名化映射丢失、脱敏后仍可拼回</td>
+</tr>
+<tr>
+<td>进阶优化</td>
+<td>假名化保险库、PII 分类器、LLM 兜底识别、红队再识别测试、合规审计链</td>
+</tr>
+<tr>
+<td>本章 TOP3</td>
+<td>见文末</td>
+</tr>
+<tr>
+<td>下章预告</td>
+<td>第 09 章：数据质量打分体系</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>合规声明：本文只讲工程方法，不构成法律意见；具体数据处理请以适用法律法规与公司法务意见为准（如中国《个人信息保护法》等）。</p>
+</blockquote>
+<hr />
+<h2 id="01">01 开篇导语</h2>
+<p>想象一个场景：你从公司工单系统导出 10 万条客服语料准备做领域模型，里面全是真实对话——<strong>“张先生您好，您的手机号 138</strong><strong> 需要更新吗？”</strong> 如果这份语料不脱敏直接训练，模型可能学会在回答中“复述”用户的手机号、身份证号、家庭住址。</p>
+<p>这不是危言耸听：大模型的记忆能力会让它把训练数据里的个人信息“背”出来。<strong>训练语料里的 PII（Personal Identifiable Information，个人可识别信息），是数据合规与用户隐私的双重红线。</strong></p>
+<p>本章解决三个问题：</p>
+<ol>
+<li>哪些信息算 PII，藏在什么形态里；</li>
+<li>怎么高召回、低误伤地把它们找出来；</li>
+<li>找到之后用掩码、泛化、删除还是假名化，以及怎么证明“脱干净了”。</li>
+</ol>
+<p>交付物：接在去重层之后的 safe 层——一套带策略表的 PII 识别/脱敏脚本 + 再识别测试 + 审计报告。</p>
+<blockquote>
+<p>一句话记住本章：<strong>脱敏不是“把几个数字换成星号”，而是“识别—脱敏—质检—审计”的闭环，且每一步都要能证明。</strong></p>
+</blockquote>
+<hr />
+<h2 id="02-pii">02 白话原理：为什么 PII 必须“出不了训练集”</h2>
+<h3 id="21-pii">2.1 PII 是什么</h3>
+<p>PII 是能直接或间接识别到具体个人的信息，常见类型：</p>
+<table>
+<thead>
+<tr>
+<th>类别</th>
+<th>示例</th>
+<th>识别难度</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>直接标识符</td>
+<td>身份证号、手机号、护照号、银行卡号</td>
+<td>低（格式+校验位）</td>
+</tr>
+<tr>
+<td>联系方式</td>
+<td>邮箱、电话、家庭地址</td>
+<td>中</td>
+</tr>
+<tr>
+<td>间接标识符</td>
+<td>姓名+生日+公司组合、工号、车牌</td>
+<td>高（需组合判断）</td>
+</tr>
+<tr>
+<td>敏感个人数据</td>
+<td>健康记录、财务、生物特征、行踪</td>
+<td>高（合规要求更严）</td>
+</tr>
+</tbody>
+</table>
+<h3 id="22-pii">2.2 为什么模型会把 PII “背”出来</h3>
+<p>预训练/微调的本质是让模型记住语料规律。高频出现的完整手机号、身份证号，会被当成“正常文本规律”学进参数。即使训练时没被直接问，用户也可能用提示词诱导模型回忆——这就是“记忆泄漏”（memorization）风险。</p>
+<h3 id="23">2.3 脱敏的本质：在“可用性”与“隐私风险”之间找平衡</h3>
+<table>
+<thead>
+<tr>
+<th>策略</th>
+<th>隐私保护</th>
+<th>数据可用性</th>
+<th>适用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>删除整条</td>
+<td>最高</td>
+<td>丢失整条样本</td>
+<td>高危文档</td>
+</tr>
+<tr>
+<td>掩码</td>
+<td>高</td>
+<td>保留结构</td>
+<td>手机号/身份证/卡号</td>
+</tr>
+<tr>
+<td>泛化</td>
+<td>中高</td>
+<td>保留统计意义</td>
+<td>地址/年龄/收入区间</td>
+</tr>
+<tr>
+<td>假名化（Tokenization）</td>
+<td>高（配合保险库）</td>
+<td>保留关联分析能力</td>
+<td>需要跨字段关联的场景</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>工程原则：<strong>先识别、后分级、再选策略</strong>；不同 PII 类型用不同策略，全部写进策略表并版本化。</p>
+</blockquote>
+<h2 id="03-pii">03 PII 识别：三件套组合拳</h2>
+<h3 id="31">3.1 识别方法对比</h3>
+<table>
+<thead>
+<tr>
+<th>方法</th>
+<th>抓什么</th>
+<th>优点</th>
+<th>缺点</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>正则</td>
+<td>手机号、邮箱、卡号等强格式</td>
+<td>快、零成本、可解释</td>
+<td>漏变体、误伤普通数字串</td>
+</tr>
+<tr>
+<td>校验位</td>
+<td>身份证、银行卡（Luhn）</td>
+<td>大幅降误伤</td>
+<td>只对带校验位的类型有效</td>
+</tr>
+<tr>
+<td>上下文规则</td>
+<td>“姓名：张三”“电话 138…”</td>
+<td>抓无格式 PII</td>
+<td>依赖上下文模板</td>
+</tr>
+<tr>
+<td>NER 模型</td>
+<td>人名、地名、机构、地址</td>
+<td>泛化好</td>
+<td>需训练/调优，CPU 成本高</td>
+</tr>
+<tr>
+<td>LLM 识别</td>
+<td>模糊/嵌套/跨句 PII</td>
+<td>理解最强</td>
+<td>慢、贵、有漏检，只做兜底</td>
+</tr>
+</tbody>
+</table>
+<p><strong>生产组合</strong>：正则+校验位做第一层召回（便宜、快），NER/上下文规则做第二层补漏，LLM 只抽检小批量疑难样本，人工复核高风险类型。</p>
+<h3 id="32">3.2 关键技巧：识别要“带上下文、带校验”</h3>
+<ul>
+<li>手机号：1[3-9] 开头 + 11 位数字 + 前后不能是数字；</li>
+<li>身份证：18 位 + 末位校验位算法校验，<strong>校验不过的 18 位数字串不是身份证</strong>（避免把订单号当身份证）；</li>
+<li>银行卡：13–19 位数字 + Luhn 校验；</li>
+<li>邮箱：标准邮箱正则 + 排除 example.com 类测试域名要按业务决定；</li>
+<li>姓名/地址：正则很难覆盖，用“称谓词/字段名上下文 + NER”识别。</li>
+</ul>
+<blockquote>
+<p>误伤比漏检更隐蔽：把普通 18 位数字全当身份证掩掉，会毁掉大量正常业务文本。<strong>凡是带校验位的类型必须做校验位。</strong></p>
+</blockquote>
+<hr />
+<h2 id="04">04 脱敏策略与工具选型</h2>
+<h3 id="41">4.1 策略表设计</h3>
+<p>每条 PII 类型一个策略条目：</p>
+<pre><code class="language-json">{
+  &quot;phone&quot;: {&quot;action&quot;: &quot;mask&quot;, &quot;keep_head&quot;: 3, &quot;keep_tail&quot;: 4},
+  &quot;email&quot;: {&quot;action&quot;: &quot;mask&quot;, &quot;keep_head&quot;: 1},
+  &quot;id_card&quot;: {&quot;action&quot;: &quot;mask&quot;, &quot;keep_head&quot;: 6, &quot;keep_tail&quot;: 4},
+  &quot;ip&quot;: {&quot;action&quot;: &quot;mask&quot;, &quot;keep_head&quot;: 0},
+  &quot;address&quot;: {&quot;action&quot;: &quot;generalize&quot;, &quot;level&quot;: &quot;district&quot;},
+  &quot;high_risk_doc&quot;: {&quot;action&quot;: &quot;delete&quot;, &quot;pii_count_threshold&quot;: 5}
+}
+</code></pre>
+<ul>
+<li>掩码（mask）：保留头尾、中间打星，保留格式可读性；</li>
+<li>泛化（generalize）：把“北京市朝阳区建国路 88 号”泛化成“北京市朝阳区”；</li>
+<li>删除（delete）：PII 密度过高或高危类型直接弃档；</li>
+<li>假名化（tokenize）：真值替换成随机 token，映射表放加密保险库（进阶方案）。</li>
+</ul>
+<h3 id="42">4.2 工具选型</h3>
+<table>
+<thead>
+<tr>
+<th>方案</th>
+<th>定位</th>
+<th>适合</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>自研正则+校验位（本章主推起步）</td>
+<td>快、可控</td>
+<td>手机/邮箱/证件等强格式为主</td>
+</tr>
+<tr>
+<td>Presidio 类开源 PII 框架</td>
+<td>规则+NER 开箱</td>
+<td>多语言、多类型，中大型管道</td>
+</tr>
+<tr>
+<td>商用 DLP/数据安全平台</td>
+<td>全托管</td>
+<td>企业级合规审计需求</td>
+</tr>
+<tr>
+<td>LLM 识别</td>
+<td>兜底精查</td>
+<td>小批量、复杂上下文</td>
+</tr>
+</tbody>
+</table>
+<p>结论：<strong>第一步先上“正则+校验位+上下文规则”</strong>，覆盖 80% 的强格式 PII；识别率不够再引入 Presidio 类框架与 NER 模型。</p>
+<h2 id="05-safe-30">05 分步实操：给管道加上 safe 层（30 分钟）</h2>
+<p>继续沿用 llm-demo/data-pipeline。safe 层读 dedup/unique.jsonl，输出“无 PII”版本。</p>
+<h3 id="step-1-pii-5">Step 1 注入含 PII 的样本（5 分钟）</h3>
+<p>保存 scripts/make_pii_sources.py：</p>
+<pre><code class="language-python"># data-pipeline/scripts/make_pii_sources.py —— 注入含 PII 的演示样本
+import json
+import pathlib
+
+root = pathlib.Path(__file__).resolve().parent.parent
+sources = root / &quot;sources&quot;
+
+pii_rows = [
+    {&quot;text&quot;: &quot;客户联系手机 13812345678，邮箱 zhangsan@example.com，请今天内处理。&quot;, &quot;meta&quot;: {&quot;channel&quot;: &quot;pii_contact&quot;}},
+    {&quot;text&quot;: &quot;身份证号码：110101199003077512，开户行信息见附件。&quot;, &quot;meta&quot;: {&quot;channel&quot;: &quot;pii_id&quot;}},
+    {&quot;text&quot;: &quot;我的工号是 9527，电话 13900001111，有急事请直接打这个号码。&quot;, &quot;meta&quot;: {&quot;channel&quot;: &quot;pii_phone&quot;}},
+    {&quot;text&quot;: &quot;请把周报发送至 lisi@example.com，并抄送 wangwu@corp.example.cn。&quot;, &quot;meta&quot;: {&quot;channel&quot;: &quot;pii_email&quot;}},
+    {&quot;text&quot;: &quot;打印机卡纸处理：关机断电，打开前盖取出卡纸，合盖后重新开机测试。&quot;, &quot;meta&quot;: {&quot;channel&quot;: &quot;qa_normal&quot;}},
+]
+
+with open(sources / &quot;helpdesk_pii.jsonl&quot;, &quot;w&quot;, encoding=&quot;utf-8&quot;) as f:
+    for row in pii_rows:
+        f.write(json.dumps(row, ensure_ascii=False) + &quot;\n&quot;)
+print(&quot;pii rows:&quot;, len(pii_rows))
+</code></pre>
+<blockquote>
+<p>说明：示例中的手机号/邮箱/身份证均为演示构造（身份证校验位按国标算法计算，不代表真实个人）。生产环境请使用真实脱敏测试集与合规审批流程。</p>
+</blockquote>
+<h3 id="step-2-pii">Step 2 把 PII 样本走完“归一化 → 清洗 → 过滤 → 去重”</h3>
+<pre><code class="language-bash">python data-pipeline/scripts/make_pii_sources.py
+python data-pipeline/scripts/normalize_sources.py
+python data-pipeline/scripts/clean_sources.py
+python data-pipeline/scripts/filter_sources.py
+python data-pipeline/scripts/dedup_sources.py
+wc -l data-pipeline/dedup/unique.jsonl
+</code></pre>
+<p>含 PII 的样本内容本身“干净、无害、不重复”，所以会一路通过前四层——这正是 safe 层存在的意义。</p>
+<h3 id="step-3-15">Step 3 写识别 + 脱敏脚本（15 分钟）</h3>
+<p>保存 scripts/mask_pii.py：</p>
+<pre><code class="language-python"># data-pipeline/scripts/mask_pii.py —— PII 识别（正则+校验位）与掩码脱敏
+import json
+import pathlib
+import re
+
+root = pathlib.Path(__file__).resolve().parent.parent
+dedup_dir = root / &quot;dedup&quot;
+safe_dir = root / &quot;safe&quot;
+manifests = root / &quot;manifests&quot;
+safe_dir.mkdir(parents=True, exist_ok=True)
+
+# 策略表：不同类型用不同动作（mask 保留头尾）
+POLICY = {
+    &quot;phone&quot;: {&quot;keep_head&quot;: 3, &quot;keep_tail&quot;: 4},
+    &quot;id_card&quot;: {&quot;keep_head&quot;: 6, &quot;keep_tail&quot;: 4},
+    &quot;email&quot;: {&quot;keep_head&quot;: 1},
+}
+MAX_PII_PER_DOC = 5   # 超过该数量视为高危文档，整条删除
+
+ID_WEIGHTS = [7, 9, 10, 5, 8, 4, 2, 1, 6, 3, 7, 9, 10, 5, 8, 4, 2]
+ID_MAP = &quot;10X98765432&quot;
+
+def valid_id_card(value):
+    if len(value) != 18:
+        return False
+    total = 0
+    for i in range(17):
+        ch = value[i]
+        if not ch.isdigit():
+            return False
+        total += int(ch) * ID_WEIGHTS[i]
+    return ID_MAP[total % 11] == value[17].upper()
+
+def mask_phone(match):
+    v = match.group(0)
+    return v[:3] + &quot;*&quot; * 4 + v[7:]
+
+def mask_id_card(match):
+    v = match.group(0)
+    if not valid_id_card(v):
+        return v  # 校验不过：不是身份证，不掩码
+    return v[:6] + &quot;*&quot; * 8 + v[14:]
+
+def mask_email(match):
+    v = match.group(0)
+    at = v.find(&quot;@&quot;)
+    return v[0] + &quot;***&quot; + v[at:]
+
+PHONE_RE = re.compile(r&quot;(?&lt;!\d)1[3-9]\d{9}(?!\d)&quot;)
+ID_RE = re.compile(r&quot;(?&lt;![0-9A-Za-z])\d{17}[0-9Xx](?![0-9A-Za-z])&quot;)
+EMAIL_RE = re.compile(r&quot;[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}&quot;)
+
+def find_pii(text):
+    found = []
+    for m in PHONE_RE.finditer(text):
+        if m.group(0)[0] == &quot;1&quot;:
+            found.append((&quot;phone&quot;, m.start(), m.end()))
+    for m in ID_RE.finditer(text):
+        if valid_id_card(m.group(0)):
+            found.append((&quot;id_card&quot;, m.start(), m.end()))
+    for m in EMAIL_RE.finditer(text):
+        found.append((&quot;email&quot;, m.start(), m.end()))
+    return found
+
+def mask_text(text, pii_list):
+    # 从后往前替换，避免位移
+    parts = []
+    prev = 0
+    result = text
+    for ptype, start, end in sorted(pii_list, key=lambda x: -x[1]):
+        seg = text[start:end]
+        if ptype == &quot;phone&quot;:
+            rep = mask_phone(re.match(PHONE_RE.pattern, seg))
+        elif ptype == &quot;id_card&quot;:
+            rep = mask_id_card(re.match(ID_RE.pattern, seg))
+        else:
+            rep = mask_email(re.match(EMAIL_RE.pattern, seg))
+        result = result[:start] + rep + result[end:]
+    return result
+
+report = []
+kept = []
+deleted = []
+
+for line in open(dedup_dir / &quot;unique.jsonl&quot;, encoding=&quot;utf-8&quot;):
+    obj = json.loads(line)
+    text = str(obj.get(&quot;text&quot;, &quot;&quot;))
+    pii = find_pii(text)
+    if len(pii) &gt;= MAX_PII_PER_DOC:
+        deleted.append({&quot;doc_id&quot;: obj[&quot;doc_id&quot;], &quot;reason&quot;: &quot;high_pii_density&quot;, &quot;count&quot;: len(pii)})
+        continue
+    masked = mask_text(text, pii)
+    for ptype, start, end in pii:
+        report.append({&quot;doc_id&quot;: obj[&quot;doc_id&quot;], &quot;type&quot;: ptype, &quot;raw&quot;: text[start:end], &quot;masked_at&quot;: start})
+    obj[&quot;text&quot;] = masked
+    kept.append(obj)
+
+with open(safe_dir / &quot;safe.jsonl&quot;, &quot;w&quot;, encoding=&quot;utf-8&quot;) as f:
+    for obj in kept:
+        f.write(json.dumps(obj, ensure_ascii=False) + &quot;\n&quot;)
+with open(safe_dir / &quot;pii_report.jsonl&quot;, &quot;w&quot;, encoding=&quot;utf-8&quot;) as f:
+    for item in report:
+        f.write(json.dumps(item, ensure_ascii=False) + &quot;\n&quot;)
+with open(safe_dir / &quot;deleted_report.jsonl&quot;, &quot;w&quot;, encoding=&quot;utf-8&quot;) as f:
+    for item in deleted:
+        f.write(json.dumps(item, ensure_ascii=False) + &quot;\n&quot;)
+
+print(&quot;kept:&quot;, len(kept), &quot;deleted:&quot;, len(deleted), &quot;pii found:&quot;, len(report))
+from collections import Counter
+print(&quot;by_type:&quot;, dict(Counter(item[&quot;type&quot;] for item in report)))
+</code></pre>
+<h3 id="step-4-5">Step 4 跑脱敏 + 再识别测试（5 分钟）</h3>
+<pre><code class="language-bash">python data-pipeline/scripts/mask_pii.py
+wc -l data-pipeline/dedup/unique.jsonl data-pipeline/safe/safe.jsonl
+cat data-pipeline/safe/pii_report.jsonl
+</code></pre>
+<p><strong>再识别测试（关键）</strong>：确认原始 PII 在脱敏文本中已不存在：</p>
+<pre><code class="language-bash">grep -c &quot;13812345678&quot; data-pipeline/safe/safe.jsonl || echo &quot;phone NOT found (OK)&quot;
+grep -c &quot;110101199003077512&quot; data-pipeline/safe/safe.jsonl || echo &quot;id NOT found (OK)&quot;
+grep -c &quot;zhangsan@example.com&quot; data-pipeline/safe/safe.jsonl || echo &quot;email NOT found (OK)&quot;
+</code></pre>
+<p>预期三条原始值都查不到；safe.jsonl 里出现的是 138<strong><em>*5678、110101</em></strong><strong><em>*</em>7512、z</strong>*@example.com 这类掩码值。</p>
+<h3 id="step-5-5">Step 5 人工抽检 + 打版本（5 分钟）</h3>
+<p>抽 20 条脱敏结果人工看：掩码是否保留必要格式、有没有把正常数字误伤（比如把订单号当成手机号）。确认后：</p>
+<pre><code class="language-bash">cd llm-demo
+git add data-pipeline
+git commit -m &quot;safe: PII mask v0.1 (phone/id/email + checksum + re-id test)&quot;
+git tag data-safe-v0.1
+</code></pre>
+<blockquote>
+<p>生产提示：pii_report 里记录了“原始值”，属于敏感信息本身——正式环境应只记录类型与位置，原始值仅存于受限审计库或直接不落盘。</p>
+</blockquote>
+<h2 id="06">06 参数详解：脱敏配置速查</h2>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>参考取值</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>phone keep_head/keep_tail</td>
+<td>3/4</td>
+<td>138****5678；保留前 3 后 4 兼顾可读与隐私</td>
+</tr>
+<tr>
+<td>id_card keep_head/keep_tail</td>
+<td>6/4</td>
+<td>110101<strong><em>*</em></strong>*7512；保留地区码与后 4 位</td>
+</tr>
+<tr>
+<td>email keep_head</td>
+<td>1–2</td>
+<td>z***@example.com；域名完整保留便于业务识别</td>
+</tr>
+<tr>
+<td>MAX_PII_PER_DOC</td>
+<td>3–10</td>
+<td>PII 密度过高视为高危文档删除；按语料实测</td>
+</tr>
+<tr>
+<td>校验位开关</td>
+<td>身份证/银行卡必须开</td>
+<td>没有校验位的纯正则会把订单号当证件号</td>
+</tr>
+<tr>
+<td>NER 置信度阈值</td>
+<td>0.5–0.8</td>
+<td>人名/地址类识别用；低置信度进人工复核</td>
+</tr>
+<tr>
+<td>泛化粒度</td>
+<td>省/市/区/街道</td>
+<td>地址按业务需要选粒度，能不用精确地址就不用</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>参数铁律：<strong>掩码规则必须“可逆检查”</strong>——脱敏后跑一遍再识别，确认原始值不再出现；再用 20–50 条人工样本检查可用性（格式是否保留、是否误伤）。</p>
+</blockquote>
+<hr />
+<h2 id="07">07 高频踩坑排查</h2>
+<p><strong>坑 1：只靠正则，漏掉变体与上下文 PII</strong>
+症状：手机号中间加空格“138 1234 5678”就漏了；姓名“王总”识别不了。
+解法：识别前先做文本归一化（去空白/全半角），正则负责强格式，NER+上下文规则补人名地址，LLM 只做兜底。</p>
+<p><strong>坑 2：不做校验位，误伤业务数字</strong>
+症状：订单号、快递单号等 18 位数字被当身份证掩掉。
+解法：身份证做国标校验位、银行卡做 Luhn 校验，校验不过一律不掩。</p>
+<p><strong>坑 3：掩码破坏格式，下游没法用</strong>
+症状：把整串全打星，模型学到“手机号全是星号”。
+解法：保留头尾与分隔符结构（138****5678）；掩码是“保结构去内容”，不是涂黑。</p>
+<p><strong>坑 4：假名化映射表丢了</strong>
+症状：用假名化后没保存映射，后续想关联分析对不上，或映射表明文放仓库被拖库。
+解法：映射表加密存放独立保险库，与训练数据隔离；没有恢复需求的场景直接用掩码/泛化更省事。</p>
+<p><strong>坑 5：脱敏后不做再识别测试</strong>
+症状：以为掩码了，结果正则没覆盖的变体把真手机号带进了训练集。
+解法：跑“再识别攻击测试”：用识别器+人工对脱敏结果复查，原始值出现率为 0 才算过。</p>
+<p><strong>坑 6：PII 报告里明文记录原始值</strong>
+症状：pii_report.jsonl 把身份证原文和 doc_id 写一起，报告本身成了新的泄密点。
+解法：报告只记类型、位置、掩码后值；原始值按最小化原则不落盘或进加密审计库。</p>
+<p><strong>坑 7：忽略“组合识别”风险</strong>
+症状：单看“张三”不敏感，但“张三+1990-03-07+北京朝阳”组合起来就是高识别度 PII。
+解法：对“间接标识符组合”单独设规则：同一文档出现姓名+生日+地域等组合时升级处理（删除或泛化）。</p>
+<hr />
+<h2 id="08">08 进阶优化：脱敏体系的进化方向</h2>
+<p><strong>① 假名化保险库</strong>：需要跨文档关联（同一客户的多次对话要能串起来）时，用“真值→随机 token”映射；映射表加密存储、严格权限、定期轮换，训练数据里只有 token。</p>
+<p><strong>② PII 分类器接力</strong>：把人工复核过的“漏网/误伤”样本回流，训练 NER/分类模型识别人名、地址等无强格式 PII，逐步降低对正则的依赖。</p>
+<p><strong>③ LLM 兜底抽检</strong>：每批次随机抽 1% 走 LLM 复查“是否还有可识别个人的信息”，与规则结果交叉验证；LLM 输出只做标记，不做自动删除。</p>
+<p><strong>④ 红队再识别测试</strong>：模拟攻击者用“训练好的模型诱导回忆 + 对脱敏库做链接攻击”两条路径测试，把“能否拼回个人”作为脱敏效果指标。</p>
+<p><strong>⑤ 合规审计链</strong>：PII 策略版本、识别日志、人工复核记录、再识别测试报告全部归档，配合数据流图（谁在什么环节接触了什么数据），形成可审计的合规证据链。</p>
+<hr />
+<h2 id="09-top3">09 本章核心总结（TOP3）</h2>
+<p><strong>TOP1</strong>：PII 识别要用“正则召回 + 校验位降误伤 + NER/上下文补漏 + 人工复核”组合拳；带校验位的类型（身份证、银行卡）必须校验，否则误伤业务数字。</p>
+<p><strong>TOP2</strong>：脱敏策略按类型分级：强格式用掩码（保结构）、地址年龄用泛化、高危文档直接删除、需要跨文档关联才用假名化（映射表加密隔离）。</p>
+<p><strong>TOP3</strong>：脱敏的验收标准是“再识别测试通过”：原始值在脱敏结果中出现率为 0，且人工抽检确认格式可用、无误伤；PII 报告遵循最小化原则，不记录明文原始值。</p>
+<hr />
+<h2 id="10">10 连载衔接</h2>
+<p>上一章（第 07 章）消灭了重复；本章加上了 safe 层——现在进入训练候选池的文本，已经“干净、该留、不重复、无 PII”。</p>
+<p>下一章给数据排座次：【第 09 章】数据质量打分体系：规则、分类器与多维度融合。不是所有活下来的数据都值得同等待遇——质量分将决定谁进训练、谁被降权。</p>
+<hr />
+<h2 id="11">11 话题标签与系列目录索引</h2>
+<p>话题标签：<strong>#LLM全栈工程 #数据脱敏 #个人信息保护 #PII #数据合规 #工程实战</strong>（Voice前沿 出品，欢迎收藏追更）</p>
+<p><strong>系列目录（46 章，随连载持续更新）</strong></p>
+<p>第 0 阶段·开篇引路
+- 01 一条大模型生产线全程发生了什么
+- 02 2 小时跑通最小闭环
+- 03 预训练到底在练什么</p>
+<p>第 1 阶段·预训练工程·数据核心层
+- 04 数据管道从零构建
+- 05 数据清洗规范与脏数据剔除
+- 06 文本过滤实战
+- 07 数据去重算法
+- 08 敏感数据脱敏（本篇）
+- 09 数据质量打分体系
+- 10 领域专属数据构建
+- 11 增量预训练方案
+- 12 预训练超参选型与硬件适配
+- 13 断点续训、收敛判断与失败排查</p>
+<p>第 2 阶段·微调与对齐体系
+- 14 全维度微调技术拆解
+- 15 SFT 监督微调实战
+- 16 SFT 数据集构建与标注规范
+- 17 微调模板设计
+- 18 微调超参调优策略
+- 19 过拟合、欠拟合与灾难遗忘
+- 20 微调效果评估体系
+- 21 多轮对话微调专项
+- 22 模型蒸馏实战
+- 23 奖励模型训练
+- 24 RLHF/PPO 工程落地
+- 25 RLAIF：AI 反馈自动对齐
+- 26 小样本与领域自适应微调</p>
+<p>第 3 阶段·基础部署与推理优化
+- 27 部署框架横向对比
+- 28 vLLM 部署实战与参数调优
+- 29 SGLang 高性能推理落地
+- 30 TensorRT-LLM 固化与加速
+- 31 模型量化实操
+- 32 模型剪枝与蒸馏压缩
+- 33 KV Cache 优化与上下文窗口拓展
+- 34 流式推理封装与高并发服务化</p>
+<p>第 4 阶段·高阶推理编译器极致优化
+- 35 推理编译器核心原理
+- 36 算子融合与计算图编译
+- 37 动态 shape 与显存编译器优化
+- 38 Speculative Decoding 投机推理进阶
+- 39 批量调度与并行深度适配
+- 40 内核重构与编译级量化</p>
+<p>第 5 阶段·全栈工程联调与项目落地
+- 41 全链路串联：数据到上线一体化流程
+- 42 领域大模型定制化落地
+- 43 高并发生产适配与端侧部署
+- 44 模型迭代升级与性能对标评测
+- 45 线上问题闭环排查
+- 46 工程化最佳实践汇总（手册终章）</p>
+<hr />
+<p><em>本文由 Voice前沿 出品 · 转载注明出处 · 下一篇：第 09 章 数据质量打分体系</em></p>
+</article>
+<nav class="prevnext"><a href="ch07.html">← 第 07 章 【LLM全栈工程·第07章】数据去重算法：从精确去重到 MinHash 近似去重</a><a href="ch09.html" style="text-align:right">第 09 章 【LLM全栈工程·第09章】数据质量打分体系：规则、分类器与多维度融合 →</a></nav>
+</main>
+<footer class="wrap"><p>LLM 全栈工程 · Voice前沿 出品 · 46 章连载 · 收藏即手册</p></footer>
+</body>
+</html>
