@@ -9,18 +9,19 @@ TinyGPT 微型预训练（MiniMind 式最小闭环，CPU 可跑）
 【核心逻辑】
 1. 读语料 -> CharTokenizer -> token id 序列；
 2. 滑窗切样本，随机采样 batch；
-3. TinyGPT 前向算全序列交叉熵；
+3. TinyGPT 前向算全序列交叉熵——注意标签要左移一位（next-token），
+   否则模型会退化成“抄当前字符”，生成时只会无限复读最后一个字；
 4. 反向更新，周期性打印 loss 与生成样例。
 
 【关键参数】见 argparse：steps/dim/layers/heads/seq/lr/batch/seed。
 
 【避坑】
 1. 语料小、模型小时 loss 会快速下降，但别期待“像人话”；
-2. loss 从 ln(vocab) 附近开始下降即为正常；
+2. loss 从 ln(vocab) 附近开始下降即为正常；忘记左移标签会让 loss 假性归零，生成却只会复读；
 3. 想复现请固定 --seed 0。
 
 【输出解读】
-- loss 从约 5 降到 1-2 说明学到字符/词搭配；
+- loss 从约 ln(vocab)≈5.9 降到 1-2 说明学到字符/词搭配；
 - 生成样例会出现语料中的词片段即说明学习生效。
 """
 
@@ -92,8 +93,9 @@ def main():
     for step in range(args.steps):
         batch_ids = [random.choice(windows) for _ in range(args.batch)]
         x = torch.tensor(batch_ids, dtype=torch.long, device=device)
-        logits = model(x)
-        loss = loss_fn(logits.view(-1, logits.shape[-1]), x.reshape(-1))
+        logits = model(x[:, :-1])              # 用前 seq-1 个位置预测
+        labels = x[:, 1:]                      # 标签整体左移一位 = next-token
+        loss = loss_fn(logits.view(-1, logits.shape[-1]), labels.reshape(-1))
         opt.zero_grad()
         loss.backward()
         opt.step()
