@@ -14,7 +14,7 @@
 | 04_sparse_attention | FlashAttention 调用 + 窗口注意力 | flash_attn_demo.py / window_attention.py | torch（flash-attn 可选） |
 | 05_audio_vision_multimodal | 音频特征 / 视觉推理 / 多模态融合 | audio_feature_demo.py / vision_inference_demo.py / multimodal_fusion_demo.py | torch / torchaudio / torchvision（可降级） |
 | 06_world_model | 简易时序推演（世界模型最小版） | world_model_demo.py | torch |
-| minimind_style | MiniMind 式微型 LLM：分词+预训练+生成+SFT+LoRA/DPO | pretrain.py / generate.py / train_sft.py / train_lora.py / train_dpo.py | torch |
+| minimind_style | MiniMind 式微型 LLM：P0–P3 全链路（预训练/SFT/LoRA/DPO/MoE/GRPO/工具模板） | pretrain.py / train_sft.py / train_lora.py / train_dpo.py / train_moe.py / train_grpo.py / tool_template_demo.py | torch |
 
 ## 环境依赖（最小公共集）
 
@@ -70,6 +70,9 @@ pip install torchaudio torchvision
 2. SFT：指令部分用 mask 屏蔽，只对回答算 response-only loss；LoRA 冻结基座、只训 A/B 两个低秩矩阵，合并时注意 ΔW 转置。
 3. DPO：policy 与冻结的 ref 同起点，用 chosen/rejected 的平均 logp 差做 margin；小样本 + 大 lr 会过优化（KL 漂移），需用小 lr 观察 margin 温和上升。
 4. 数据注意：chosen/rejected 不要互相引用对方答案，避免自相矛盾的偏好；字符级词表小，UNK 字符无学习信号。
+5. MoE：Router 打分 + Top-k 专家，aux loss 防路由坍塌；小模型+小语料下 MoE 采样质量不如 Dense，稀疏收益在大规模才显现。
+6. GRPO：组内采样 + 规则奖励 + 组相对 advantage；过拟合模型会导致全组 reward 相同、无学习信号，需要更难的任务或更小温度。
+7. 工具/思考模板：先有模板工程再有训练数据；字符级分词覆盖不了 <>{} 等模板字符，真实项目用 BPE。
 
 ## 使用流程
 

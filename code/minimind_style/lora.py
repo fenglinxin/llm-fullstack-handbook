@@ -36,11 +36,12 @@ class LoRALinear(nn.Module):
         super().__init__()
         self.in_features = base.in_features
         self.out_features = base.out_features
-        # 基座权重：detach 后冻结，不参与梯度
-        self.base_weight = nn.Parameter(base.weight.detach().clone(), requires_grad=False)
-        self.base_bias = None
+        # 基座权重：detach 后以非持久 buffer 保存（冻结、不计入 parameters/state_dict）
+        self.register_buffer("base_weight", base.weight.detach().clone(), persistent=False)
         if base.bias is not None:
-            self.base_bias = nn.Parameter(base.bias.detach().clone(), requires_grad=False)
+            self.register_buffer("base_bias", base.bias.detach().clone(), persistent=False)
+        else:
+            self.base_bias = None
         # 低秩分支：x @ A @ B
         self.r = r
         self.scale = alpha / r
