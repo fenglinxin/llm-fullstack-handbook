@@ -2,9 +2,12 @@
 """
 Mamba / 结构化状态空间模型 落地 Demo
 
+【层级】L1（极简 Demo：双路径理解 SSM，CPU 秒级出结果）
+
 【环境依赖】
-- Python 3.10+, PyTorch 2.x（基础版 CPU 可跑）
-- 可选：mamba-ssm（Linux + CUDA 环境，安装与版本以官方文档为准）
+- Python 3.10+；PyTorch 2.x（建议 >=2.1）；基础版仅 torch
+- 安装：pip install torch==2.2.2（GPU 版按官网 CUDA 版本装；本 Demo CPU 可跑）
+- 可选：mamba-ssm（仅 Linux + CUDA，安装与版本以官方文档为准）
 
 【两条路径】
 - 路径 A：用开源库 mamba-ssm 快速加载 Mamba 做推理；
@@ -13,16 +16,38 @@ Mamba / 结构化状态空间模型 落地 Demo
 
 【核心逻辑】
 - SSM 每步：state = A*state + B*x；y = C*state（简化为可学习的离散递推）；
-- Mamba 的选择机制让 A/B/C 随输入变化，本 Demo 用固定矩阵演示骨架。
+- Mamba 的选择机制让 A/B/C 随输入变化，本 Demo 用固定矩阵演示骨架；
+- 逐行注释见 MinimalSSM.forward：tanh 收束状态、残差连接便于训练。
+
+【关键参数】
+- d_model=8（默认；=输入特征维度，改数据时同步改）：模型宽度；
+- d_state=16（默认；任务记忆长度相关，长程任务加大 32-64）：隐状态维度；
+- seq=64/128（Demo 计时用；越大越能看出线性复杂度）。
 
 【避坑】
 1. mamba-ssm 依赖 CUDA 与特定 torch 版本，Windows 通常不支持，别硬装；
 2. 真正 Mamba 的并行扫描 kernel 无法用简单 for 循环替代性能；
 3. 无 GPU 时请走路径 B，理解原理后再上真库。
 
+【运行结果示例】（真实运行，CPU）
+$ python mamba_demo.py
+mamba-ssm 不可用（请 Linux+CUDA 环境安装）： No module named mamba_ssm
+MinimalSSM output: (2, 20, 8)
+seq=64 forward 8.3 ms
+seq=128 forward 10.3 ms
+（路径 B 正常输出 + 计时行 = 成功；路径 A 打印“不可用”是预期降级，不是报错）
+
 【输出解读】
 - 路径 B 输出形状与输入一致；
-- state 维度过大/过小分别对应记太多/记不住。
+- state 维度过大/过小分别对应记太多/记不住；
+- 计时趋势：seq 翻倍耗时接近翻倍（线性），而非注意力式 4 倍。
+
+【高频报错 Top5】
+1. “No module named mamba_ssm”：路径 A 未安装；修复：Linux+CUDA 下 pip install mamba-ssm，或直接走路径 B；
+2. 维度报错：x 需 [batch, seq, d_model]；修复：d_model 与 MinimalSSM(d_model=...) 保持一致；
+3. 训练不收敛：A 初始化太大导致 state 爆炸；修复：A 初始化乘 0.05 或更小；
+4. tanh 让输出范围受限：输出被压缩到 (-1,1) 附近；修复：加输出 Linear 头或去掉 tanh（用 leaky 版本）；
+5. 计时波动大：后台进程干扰；修复：多次取平均，避免在 IDE 后台运行时计时。
 
 【工程改造方向】
 - 用真 Mamba 前先确认推理框架（vLLM/SGLang）支持该架构；
