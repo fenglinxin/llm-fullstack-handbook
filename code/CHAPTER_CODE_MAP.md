@@ -10,13 +10,13 @@
 | 01 | 一条大模型生产线全程 | minimind_style 主线脚本链（corpus→pretrain→sft→dpo→部署）+ tool_template_demo | ✅ |
 | 02 | 2 小时跑通最小闭环 | minimind_style/pretrain.py + train_sft.py + generate.py（第 00 章 L2 引擎可作闭环替代） | ✅ |
 | 03 | 预训练到底在练什么 | minimind_style/pretrain.py + model.py + tokenizer.py | ✅ |
-| 04 | 数据管道从零构建 | data_engineering/pipeline_ingest.py | 🛠 计划批次 A |
-| 05 | 数据清洗规范与脏数据剔除 | data_engineering/clean_rules.py | 🛠 A |
-| 06 | 文本过滤实战 | data_engineering/text_filter.py | 🛠 A |
-| 07 | 数据去重算法 | data_engineering/dedup_minhash.py | 🛠 A |
-| 08 | 敏感数据脱敏 | data_engineering/pii_mask.py | 🛠 A |
-| 09 | 数据质量打分体系 | data_engineering/quality_score.py | 🛠 B |
-| 10 | 领域专属数据构建 | data_engineering/domain_build.py | 🛠 B |
+| 04 | 数据管道从零构建 | data_engineering/pipeline_ingest.py | ✅ |
+| 05 | 数据清洗规范与脏数据剔除 | data_engineering/clean_rules.py | ✅ |
+| 06 | 文本过滤实战 | data_engineering/text_filter.py | ✅ |
+| 07 | 数据去重算法 | data_engineering/dedup_minhash.py | ✅ |
+| 08 | 敏感数据脱敏 | data_engineering/pii_mask.py | ✅ |
+| 09 | 数据质量打分体系 | data_engineering/quality_score.py | ✅ |
+| 10 | 领域专属数据构建 | data_engineering/domain_build.py | ✅ |
 | 11 | 增量预训练方案 | minimind_style/pretrain.py（可续跑语料增量）+ training_tools/continue_pretrain.py（计划 C） | 🛠 C |
 | 12 | 预训练超参选型与硬件适配 | training_tools/hyperparam_sweep.py | 🛠 C |
 | 13 | 断点续训/收敛判断/失败排查 | 00_rnn_lstm_gru/ts_forecast_engine.py + 01_transformer/seq2seq_engine.py（resume/early stop 已实现） | ✅ |
