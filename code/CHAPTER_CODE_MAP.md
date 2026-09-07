@@ -2,7 +2,7 @@
 
 > 原则：每章至少对应一个可直接运行的工程脚本/目录；
 > 新代码遵守 code/CODE_STANDARD.md（9 个文档字段 + 三层标注）。
-> 状态：✅=已有可运行代码；🛠=本轮/后续补建（见“计划批次”）。
+> 状态：✅=已有可运行代码（47 章全覆盖）。
 
 | 章节 | 主题 | 对应代码（可运行） | 状态 |
 |---|---|---|---|
@@ -47,11 +47,11 @@
 | 38 | Speculative Decoding 投机推理进阶 | deployment/speculative_demo.py | ✅ |
 | 39 | 批量调度与并行深度适配 | deployment/continuous_batching_demo.py | ✅ |
 | 40 | 内核重构与编译级量化 | 复用 deployment/quantize_demo.py + fusion_bench.py + compiler_ir_demo.py | ✅ |
-| 41 | 全链路串联 | ops_pipeline/end_to_end.py（corpus→pretrain→sft→eval 一键编排） | 🛠 G |
-| 42 | 领域大模型定制化落地 | ops_pipeline/domain_launch.py | 🛠 G |
-| 43 | 高并发生产适配与端侧部署 | deployment/stream_server_demo.py + ops_pipeline/onnx_export_demo.py | 🛠 G |
-| 44 | 模型迭代升级与性能对标评测 | ops_pipeline/ab_compare.py | 🛠 G |
-| 45 | 线上问题闭环排查 | ops_pipeline/monitor_demo.py（日志+告警规则） | 🛠 G |
+| 41 | 全链路串联 | ops_pipeline/end_to_end.py | ✅ |
+| 42 | 领域大模型定制化落地 | ops_pipeline/domain_launch.py | ✅ |
+| 43 | 高并发生产适配与端侧部署 | stream_server_demo.py + ops_pipeline/onnx_export_demo.py | ✅ |
+| 44 | 模型迭代升级与性能对标评测 | ops_pipeline/ab_compare.py | ✅ |
+| 45 | 线上问题闭环排查 | ops_pipeline/monitor_demo.py | ✅ |
 | 46 | 工程化最佳实践汇总 | 本映射表 + code/CODE_STANDARD.md（汇总性文档即交付物） | ✅ |
 
 ## 计划批次

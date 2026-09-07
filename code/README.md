@@ -92,4 +92,4 @@ pip install torchaudio torchvision
 ## 说明
 
 - 代码以教学与原型验证为目标，生产部署请回到主线 27–40 章的框架/量化/编译流程；
-- 涉及模型版本与硬件 kernel 的库，以官方文档为准。
+- 涉及模型版本与硬件 kernel 的库，以官方文档为准。| ops_pipeline | 主线 41-45 运营与全链路（端到端/领域启动/ONNX/AB/监控） | end_to_end.py / domain_launch.py / onnx_export_demo.py / ab_compare.py / monitor_demo.py | torch + minimind_style |
