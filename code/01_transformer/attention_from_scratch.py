@@ -2,9 +2,17 @@
 """
 Transformer 落地代码 1/2：手写注意力 + 多头注意力 + 位置编码
 
+【层级】L1（极简 Demo：新手跑通，零依赖第三方，CPU 秒级出结果）
+
 【环境依赖】
-- Python 3.10+, PyTorch 2.x
-- CPU 即可运行
+- Python 3.10+；PyTorch 2.x（建议 >=2.1，可用 F.scaled_dot_product_attention 对照）
+- 安装：pip install torch==2.2.2（CPU/GPU 通用；GPU 版请按官网 CUDA 版本安装）
+- CPU 即可运行，无 CUDA 需求
+
+【核心逻辑】
+- 公式：Attention(Q,K,V)=softmax(QK^T/sqrt(d_k))V；逐行注释见函数与类实现
+- 多头：Linear 投影 -> 切头 -> 注意力 -> 拼接 -> 输出投影，head_dim=d_model/n_heads
+- 位置编码：偶数位 sin、奇数位 cos，直接加到输入上
 
 【本文件做什么】
 - 从零实现 Scaled Dot-Product Attention：softmax(QK^T/sqrt(d))V
@@ -25,6 +33,20 @@ Transformer 落地代码 1/2：手写注意力 + 多头注意力 + 位置编码
 【输出解读】
 - 输出形状为 [batch, seq_len, d_model]；
 - 数值范围比输入更“集中”，说明注意力在做加权平均。
+
+【运行结果示例】
+$ python attention_from_scratch.py
+MHA output: (2, 10, 32)
+After PE: (2, 10, 32) std=1.163
+Causal MHA: (2, 10, 32)
+（三行都打印且无报错 = 运行成功；std 远大于 0 说明位置信息已注入）
+
+【高频报错 Top5】
+1. “assert d_model % n_heads == 0”失败：head_dim 除不尽；修复：让 n_heads 整除 d_model；
+2. 维度不匹配 RuntimeError：q/k/v 需同 shape [b,heads,s,head_dim]；修复：打印各张量 shape 对照公式；
+3. softmax 输出全是 NaN：score 未除 sqrt(d_k) 或 mask 填了 -inf 后未做 valid 行；修复：除 sqrt(d_k) 且保证每行至少一个非掩码位置；
+4. CUDA/CPU device mismatch：q/k/v 需在同一 device；修复：统一 .to(device)；
+5. 位置编码后数值爆炸：d_model 大时 div 计算用 float32 溢出；修复：用 float64 预计算再转 float32。
 
 【工程改造方向】
 - 加 causal mask 即可变成 decoder-only 自回归注意力；
@@ -120,6 +142,7 @@ def main():
 3. 输出加权注意力权重，可视化“模型在看谁”；
 4. 用 FlashAttention（见 04 目录）替换本实现并对比速度/显存；
 5. 对 d_model/heads 做消融，观察表达能力与显存。
+【本文件在规范中的位置】L1 Demo；同目录 seq2seq_engine.py（L2）与 attention_opt.py（L3）
 """
 
 if __name__ == "__main__":

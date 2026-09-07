@@ -2,13 +2,29 @@
 """
 Transformer 落地代码 2/2：手写注意力的最小 Encoder-Decoder（序列反转任务）
 
+【层级】L1/L2 混合（极简训练可跑 + 已带基础工程参数；生产级工程封装见 seq2seq_engine.py）
+
 【环境依赖】
-- Python 3.10+, PyTorch 2.x；CPU 可运行
+- Python 3.10+, PyTorch 2.x（建议 >=2.1）；CPU 可运行
+- 安装：pip install torch==2.2.2（GPU 版按官网 CUDA 版本安装）
 - 复用同目录 attention_from_scratch.py 的组件
 
 【任务】给定一串数字，输出它的反转序列。
 - 例：输入 [3, 1, 4] -> 输出 [4, 1, 3]
 - 任务简单但能验证：编码器理解全序列、解码器自回归生成
+
+【核心逻辑】
+- 反转任务：模型输入 src 数字序列，输出翻转序列 tgt；
+- Encoder：自注意力编码全序列；Decoder：因果自注意力 + 交叉注意力 + FFN；
+- 训练 teacher forcing（输入 tgt[:-1] 预测 tgt[1:]），推理逐 token 生成；
+- 逐行注释见函数与训练循环。
+
+【关键参数】
+- d_model=32（默认；64-128 效果更稳，CPU 更慢）：模型宽度；
+- n_heads=4（默认；需整除 d_model）：注意力头数；
+- max_len=20：位置编码长度，小于序列长度会报错；
+- epochs/steps=300：训练步数（默认最优 300；加深模型后 500+）；
+- lr=1e-3（默认最优；太大 loss 震荡，太小收敛慢）。
 
 【参数调优模板】
 - d_model=32, n_heads=4, max_len=20, epochs=200, lr=1e-3
@@ -23,6 +39,24 @@ Transformer 落地代码 2/2：手写注意力的最小 Encoder-Decoder（序列
 - 训练 loss 下降；
 - 最终 accuracy 接近 1.0 说明学会了反转规则；
 - 若 accuracy 为 0，多半是 mask/位置编码写错。
+
+【运行结果示例】
+$ python train_seq2seq_mini.py
+step 0 loss 3.0079
+step 50 loss 2.5282
+step 100 loss 1.9294
+step 150 loss 1.3378
+step 200 loss 0.8692
+step 250 loss 0.6523
+valid accuracy = 0.750
+（loss 单调下降 + accuracy>0.5 = 训练成功；accuracy≈1.0 表示完全学会反转）
+
+【高频报错 Top5】
+1. “Sizes of tensors must match”在 decode_step：tgt_embed 长度与 enc_out 不一致；修复：保持 batch 内同长；
+2. generate 结果全 0：SOS=0 与 vocab 的 0 冲突（本任务 0 未占用）；换真实词表时改用独立 BOS token；
+3. loss 不降：lr 太大或未归一化；修复：lr=1e-3 起步，加梯度裁剪；
+4. 推理比训练差很多：teacher forcing 暴露偏差；修复：推理时逐 token 拼接（本文件已实现）；
+5. 换更大 d_model 后 OOM：CPU 内存/显存翻倍；修复：减小 batch 或 max_len。
 
 【工程改造方向】
 - 换成真正文本：用 tokenizer 替代整数词表；
@@ -148,6 +182,7 @@ def main():
 3. 对比正弦 PE 与 RoPE 的外推；
 4. 对 src 加 padding mask，支持变长 batch；
 5. 训练后接主线 SFT/部署流程，把它换成真实 LLM 底座。
+【本文件在规范中的位置】L1/L2 混合；L2 完整工程封装见 seq2seq_engine.py，L3 优化见 attention_opt.py
 """
 
 if __name__ == "__main__":

@@ -8,7 +8,7 @@
 | 目录 | 覆盖架构 | 运行文件 | 依赖 |
 |---|---|---|---|
 | 00_rnn_lstm_gru | RNN / LSTM / GRU | rnn_lstm_gru_demo.py | torch |
-| 01_transformer | 手写注意力 + 小型编解码 | attention_from_scratch.py / train_seq2seq_mini.py | torch |
+| 01_transformer | 手写注意力 + 小型编解码（三层：L1 手写 MHA / L2 训练引擎 / L3 注意力优化） | attention_from_scratch.py（L1）/ seq2seq_engine.py（L2）/ attention_opt.py（L3） | torch |
 | 02_mamba | SSM 直觉 + Mamba 库接入 | mamba_demo.py | torch（mamba-ssm 可选，Linux+CUDA） |
 | 03_moe | 稀疏专家路由 | moe_demo.py | torch |
 | 04_sparse_attention | FlashAttention 调用 + 窗口注意力 | flash_attn_demo.py / window_attention.py | torch（flash-attn 可选） |
