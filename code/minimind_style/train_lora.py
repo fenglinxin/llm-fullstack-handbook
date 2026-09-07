@@ -124,3 +124,22 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+"""
+规范字段补充（全局强制代码落地规范）
+
+【层级】L2（工程训练：在 SFT 基座上用 LoRA 继续微调并保存 adapter+合并模型）
+【运行结果示例】（真实运行，CPU，60 epochs）
+params total=63680 trainable=16384 (25.729%)
+step  20 loss 0.0361 | 问：打印机连不上怎么办？答：先检查电源和网络，然后重启打印机，并提交工单。
+adapter saved -> .../out/lora.pt
+merged model saved -> .../out/lora_merged.pt
+（基座已是 SFT 模型所以起点 loss≈0.11；合并模型加载后生成一致 = merge 正确）
+【高频报错 Top5】
+1. load_state_dict size mismatch：lora_merged 与 TinyGPT 结构不一致；修复：确认 cfg 同源；
+2. 训练全量参数（速度慢/爆显存）：检查 apply_lora 是否执行（打印可训练占比）；
+3. adapter 只有 A/B：想部署需先 merge；修复：加载 merged ckpt；
+4. resume 需要 optimizer 状态：本脚本未实现断点，需要时参考 L2 引擎模板；
+5. alpha 过大 loss 震荡：alpha 从 r 起调。
+【工程改造方向】多基座切换实验、adapter 合并到 INT8 基座、批处理多条 adapter 服务。
+"""

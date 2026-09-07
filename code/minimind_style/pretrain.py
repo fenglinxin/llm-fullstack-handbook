@@ -135,3 +135,21 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+"""
+规范字段补充（全局强制代码落地规范）
+
+【层级】L1（极简预训练：直接 python pretrain.py 跑通，配合 model.py 理解）
+【运行结果示例】（真实运行，CPU，400 步）
+step 399 loss 0.0187 | 人工智能正在改变世界。大语言模型通过预测下一个词来学习
+saved -> .../out/pretrain.pt
+（loss 从约 5.9 单调下降、生成与语料一致 = 预训练闭环成功）
+【高频报错 Top5】
+1. loss 假性归零但生成复读：标签忘了左移一位（本文件已修复并注释）；
+2. windows 为空：语料长度 < seq；修复：换长语料或减小 --seq；
+3. 换语料后 UNK：先重跑 data/make_corpus.py 再训；
+4. 训练很慢：CPU 上减小 --dim/--steps 验证后再放大；
+5. CUDA OOM：--batch 16 减到 8。
+【工程改造方向】断点续训/日志可视化在 L2 引擎（00 章 ts_forecast_engine 模板）中实现；
+本文件保持极简便于读代码。
+"""

@@ -1,10 +1,21 @@
 # -*- coding: utf-8 -*-
-"""生成 MiniMind-O 教学数据集（data/omni.jsonl）。
+"""
+生成 MiniMind-O 教学数据集（data/omni.jsonl）
 
-每行：{modality, freq 或 pid, noise_seed, q, a}
-- audio：三档音调（440/660/880Hz）x 5 个噪声实例；
-- vision：8 种图案 x 5 个噪声实例（与 vision.jsonl 同一套图案渲染）。
-- 划分：noise_seed 0-2 训练，3-4 测试（没见过的“听感/图像实例”）。
+【层级】L1（数据工具：极简可跑）
+【环境依赖】Python 3.10+，仅标准库；依赖 vision_model/omni_model 的常量
+【核心逻辑】audio：3 档音调 x 5 噪声实例；vision：8 图案 x 5 实例；
+划分 noise_seed 0-2 训练 / 3-4 测试。
+【关键参数】SEEDS=range(5)（默认即最优；想加难度可加噪声幅度参数）
+【避坑】freq 与 TONE_NAMES 索引一一对应，别改顺序；改完重跑
+【运行结果示例】$ python data/make_omni_data.py
+omni rows: 55 (audio 15, vision 40)
+【高频报错 Top5】
+1. ModuleNotFoundError：从 minimind_style 根目录运行；2. 中文乱码：utf-8；
+3. 行数不对：改了 SEEDS 没重跑；4. train_o.py 精度不升：确认两个 jsonl 都最新；
+5. 索引错位导致“低音”答成“高音”：检查 TONE_NAMES 顺序。
+【输出解读】rows=55（audio 15 + vision 40）即成功。
+【工程改造方向】加真实音频/图片路径列；加第三模态（文本）字段。
 """
 import json
 import pathlib

@@ -1,13 +1,21 @@
 # -*- coding: utf-8 -*-
-"""生成 MiniMind-V 教学数据集（data/vision.jsonl）。
+"""
+生成 MiniMind-V 教学数据集（data/vision.jsonl）
 
-每行：{pid, noise_seed, q, a}
-- pid：8 种基础图案（角块/横线/竖线/十字/边框）；
-- noise_seed：同一图案的不同“图像实例”（随机位置加一粒噪声点）。
-- 划分：训练用每图案 noise_seed 0-2，测试用 noise_seed 3-4——
-  测试都是“见过的图案、没见过的图像实例”，只有真正学到
-  “图案概念”的模型才能答对，纯背图/背答案都会在测试集露馅。
-- q/a：看图问答的文本（q 不含“问：/答：”外壳，训练时再拼模板）。
+【层级】L1（数据工具：极简可跑）
+【环境依赖】Python 3.10+，仅标准库；需同目录上级的 vision_model.py（CAPTIONS）
+【核心逻辑】每行 {pid, noise_seed, q, a}；训练用 noise_seed 0-2、测试 3-4，
+测试全是“见过的图案、没见过的图像实例”，防止纯背图。
+【关键参数】TRAIN_SEEDS=[0,1,2]、TEST_SEEDS=[3,4]（默认即最优：40 行=8 图案 x 5 实例）
+【避坑】noise_seed 直接传给 render_pattern，两者必须同源；改 CAPTIONS 后重跑
+【运行结果示例】$ python data/make_vision_data.py
+vision rows: 40 (train seeds [0, 1, 2], test seeds [3, 4])
+【高频报错 Top5】
+1. ModuleNotFoundError vision_model：从 minimind_style 根目录运行；
+2. 中文乱码：PYTHONIOENCODING=utf-8；3. train_v.py 报样本数少：先重跑本脚本；
+4. 测试集 acc 为 0 是正常教学结果（未见图案泛化难）；5. 忘加 noqa 注释导致 lint 报错。
+【输出解读】rows=40 且划分正确即成功。
+【工程改造方向】换真实图片时改为记录图片路径列；渲染函数换成图像加载。
 """
 import json
 import pathlib

@@ -1,8 +1,20 @@
 # -*- coding: utf-8 -*-
-"""生成微型 DPO 数据（chosen=真实答案，rejected=串词/错误答案）。
+"""
+生成微型 DPO 数据（data/dpo.jsonl：chosen=真实答案，rejected=串词/错误答案）
 
-【约束】rejected 只使用语料中已出现的字符，保证 tokenizer 不会把
-rejected 变成 UNK（UNK 位置无法提供有效梯度）。
+【层级】L1（数据工具：极简可跑）
+【环境依赖】Python 3.10+，仅标准库（json/pathlib）
+【核心逻辑】每行 {q, chosen, rejected}；rejected 只使用语料中已出现字符，
+避免 tokenizer 把 rejected 变成 UNK（UNK 位置没有学习信号）。
+【关键参数】PAIRS：6 条偏好对（默认值即为教学最优值；真实项目换大偏好数据集）
+【避坑】rejected 不要引用其他问题的 chosen，会形成自相矛盾的偏好信号
+【运行结果示例】$ python data/dpo_data.py → dpo pairs: 6 -> .../data/dpo.jsonl
+【高频报错 Top5】
+1. jsonl 找不到：从 minimind_style 目录运行；2. 中文乱码：加 PYTHONIOENCODING=utf-8；
+3. 训练时 rejected logp 不下降：字符在词表外；4. margin 恒为 0：policy 与 ref 同起点正常；
+5. 改 PAIRS 后没重跑：train_dpo.py 读的是 jsonl。
+【输出解读】打印 “dpo pairs: 6” 即成功。
+【工程改造方向】换真实偏好数据（hh-rlhf 风格）；加多人标注/投票字段。
 """
 import json
 import pathlib

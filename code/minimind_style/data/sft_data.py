@@ -1,5 +1,21 @@
 # -*- coding: utf-8 -*-
-"""生成微型 SFT 数据（与语料同一套字符，保证 tokenizer 覆盖）。"""
+"""
+生成微型 SFT 数据（data/sft.jsonl，与语料同一套字符，保证 tokenizer 覆盖）
+
+【层级】L1（数据工具：极简可跑）
+【环境依赖】Python 3.10+，仅标准库（json/pathlib）
+【核心逻辑】内置 6 条 QA（q 含“？”，a 为语料中的标准答案），按 jsonl 写出；
+train_sft.py 用字符偏移 mask 只对 a 部分算 loss。
+【关键参数】PAIRS：问答对列表（默认 6 条；想加样本直接追加，字符会自动进词表）
+【避坑】q/a 里的字符若不在 corpus.txt 会以 UNK 出现；新增前先在 corpus 中确认
+【运行结果示例】$ python data/sft_data.py → sft pairs: 6 -> .../data/sft.jsonl
+【高频报错 Top5】
+1. jsonl 找不到：从 minimind_style 目录运行；2. 中文乱码：加 PYTHONIOENCODING=utf-8；
+3. 答案首字是 UNK：该字符不在词表；4. 训练不收敛先重跑 make_corpus+pretrain；
+5. 行数不对：确认 main() 被调用（__main__ 保护）。
+【输出解读】打印 “sft pairs: 6” 即成功；train_sft.py 启动时也会打印样本数核对。
+【工程改造方向】换成自己的指令数据（jsonl 同构即可）；加 system/多轮字段见 tool_template_demo。
+"""
 import json
 import pathlib
 

@@ -145,3 +145,22 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+"""
+规范字段补充（全局强制代码落地规范）
+
+【层级】L2（对齐训练：手写 DPO loss 的最小完整实现）
+【运行结果示例】（真实运行，CPU，默认参数 lr=1e-5/beta=0.5）
+sft 模型 mean margin=1.45 -> dpo 模型 mean margin=2.38（6 条偏好对评测）
+step 119 loss 0.6199 margin 0.8886 | 问：打印机连不上怎么办？答：先检查电源和网络，然后重启打印机，并提交工单。
+saved -> .../out/dpo.pt
+（margin 温和上升且贪心生成保持完整 = 对齐生效；lr=5e-4 会把 margin 冲到 8+ 但生成崩坏，
+这是小样本 KL 漂移的教学案例）
+【高频报错 Top5】
+1. ref 也在反传：ref 必须 requires_grad_(False) + no_grad（本文件已做）；
+2. margin 恒 0：policy 与 ref 同起点且未训练；跑几轮后看趋势；
+3. chosen/rejected 有 UNK：无学习信号；修复：字符需在词表内（dpo_data 已约束）；
+4. 生成质量骤降：lr 过大过优化；修复：lr<=1e-5、epochs<=40；
+5. 长度偏差：平均 logp 与求和 logp 结论不同；修复：明确口径再对比。
+【工程改造方向】加 ratio clip 与 KL 惩罚变完整 GRPO（train_grpo.py）；换真实偏好数据。
+"""

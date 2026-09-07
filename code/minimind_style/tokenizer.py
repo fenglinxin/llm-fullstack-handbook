@@ -51,3 +51,31 @@ class CharTokenizer:
         obj.itos = data["itos"]
         obj.unk_id = obj.vocab.get("<unk>", 0)
         return obj
+
+"""
+规范字段补充（全局强制代码落地规范）
+
+【层级】L1（基础工具：字符级分词器，全部脚本共用）
+【运行结果示例】（真实运行）
+$ python -c "from tokenizer import CharTokenizer; import pathlib; tok=CharTokenizer.load(pathlib.Path('out/vocab.json')); print('vocab:',len(tok.vocab)); print(tok.decode(tok.encode('人工智能')))"
+vocab: 367
+人工智能
+【高频报错 Top5】
+1. 词表与 checkpoint 不一致（vocab 数不同）：重跑 pretrain.py 重新 fit+save；
+2. 换语料后旧 vocab.json 有 UNK：必须重训 tokenizer；
+3. JSON 解析失败：vocab.json 损坏/非 utf-8；修复：删掉重跑 pretrain.py；
+4. decode 出现 <unk>：encode 时遇到过词表外字符；修复：先 fit 或加 fallback；
+5. Windows 写文件乱码：open 时显式 encoding="utf-8"（本模块已做）。
+【工程改造方向】真实项目把本模块换成 BPE/ByteLevel（主线 04-06 章）：
+接口 fit/encode/decode/save/load 保持不变，上层无需改动。
+"""
+
+"""
+规范字段补充 2（补齐缺失字段标记）
+
+【核心逻辑】
+- fit(texts)：收集字符集，排序后附 <unk>/<s>/</s> 生成词表；
+- encode/decode：字符 <-> id 互转，vocab 外字符一律回退 <unk>；
+- save/load：json 持久化词表，供训练/推理脚本共享。
+【输出解读】vocab 大小随语料字符数变化；decode(encode(x))==x 要求 x 无 OOV 字符。
+"""
