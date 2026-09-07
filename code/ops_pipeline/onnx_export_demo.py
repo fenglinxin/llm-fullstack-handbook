@@ -2,7 +2,7 @@
 """
 第43章 端侧/生产适配：TinyGPT ONNX 导出（一键脚本，含降级诊断）
 
-【层级】L2（导出工具：PyTorch -> ONNX 最小导出与降级提示）
+【层级】L3（导出优化：PyTorch -> ONNX 最小导出与降级提示）
 【环境依赖】Python 3.10+；PyTorch 2.x；onnx（pip install onnx，缺省走降级提示）
 【核心逻辑】构建 TinyGPT 小模型随机初始化，torch.onnx.export 导出
 model.onnx 并校验输入输出；onnx 包缺失时打印安装命令与导出计划（降级）。
