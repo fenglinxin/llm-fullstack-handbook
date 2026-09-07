@@ -17,15 +17,15 @@
 | 08 | 敏感数据脱敏 | data_engineering/pii_mask.py | ✅ |
 | 09 | 数据质量打分体系 | data_engineering/quality_score.py | ✅ |
 | 10 | 领域专属数据构建 | data_engineering/domain_build.py | ✅ |
-| 11 | 增量预训练方案 | minimind_style/pretrain.py（可续跑语料增量）+ training_tools/continue_pretrain.py（计划 C） | 🛠 C |
-| 12 | 预训练超参选型与硬件适配 | training_tools/hyperparam_sweep.py | 🛠 C |
+| 11 | 增量预训练方案 | training_tools/continue_pretrain.py（词表扩展+小 lr 续训） | ✅ |
+| 12 | 预训练超参选型与硬件适配 | training_tools/hyperparam_sweep.py | ✅ |
 | 13 | 断点续训/收敛判断/失败排查 | 00_rnn_lstm_gru/ts_forecast_engine.py + 01_transformer/seq2seq_engine.py（resume/early stop 已实现） | ✅ |
 | 14 | 全维度微调技术拆解 | minimind_style/lora.py+train_lora.py（LoRA）、train_sft.py（全参） | ✅ |
 | 15 | SFT 监督微调实战 | minimind_style/train_sft.py | ✅ |
 | 16 | SFT 数据集构建与标注规范 | minimind_style/data/sft_data.py + data_engineering/quality_score.py | ✅ |
 | 17 | 微调模板设计 | minimind_style/tool_template_demo.py | ✅ |
-| 18 | 微调超参调优策略 | training_tools/hyperparam_sweep.py（同 12，扩展 rank/alpha/lr） | 🛠 C |
-| 19 | 过拟合/欠拟合/灾难遗忘 | training_tools/overfit_diagnoser.py | 🛠 C |
+| 18 | 微调超参调优策略 | training_tools/hyperparam_sweep.py（--include_lora 扫 rank/alpha） | ✅ |
+| 19 | 过拟合/欠拟合/灾难遗忘 | training_tools/overfit_diagnoser.py（gap 曲线+早停对照） | ✅ |
 | 20 | 微调效果评估体系 | training_tools/eval_harness.py | 🛠 C |
 | 21 | 多轮对话微调专项 | training_tools/multiturn_sft.py | 🛠 C |
 | 22 | 模型蒸馏实战 | training_tools/distill_demo.py | 🛠 D |
