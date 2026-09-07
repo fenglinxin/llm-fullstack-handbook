@@ -22,12 +22,12 @@
 | 13 | 断点续训/收敛判断/失败排查 | 00_rnn_lstm_gru/ts_forecast_engine.py + 01_transformer/seq2seq_engine.py（resume/early stop 已实现） | ✅ |
 | 14 | 全维度微调技术拆解 | minimind_style/lora.py+train_lora.py（LoRA）、train_sft.py（全参） | ✅ |
 | 15 | SFT 监督微调实战 | minimind_style/train_sft.py | ✅ |
-| 16 | SFT 数据集构建与标注规范 | minimind_style/data/sft_data.py + data_engineering/quality_score.py | ✅ |
+| 16 | SFT 数据集构建与标注规范 | minimind_style/data/sft_data.py + data_engineering/quality_score.py + training_tools/eval_harness.py（标注质检） | ✅ |
 | 17 | 微调模板设计 | minimind_style/tool_template_demo.py | ✅ |
 | 18 | 微调超参调优策略 | training_tools/hyperparam_sweep.py（--include_lora 扫 rank/alpha） | ✅ |
 | 19 | 过拟合/欠拟合/灾难遗忘 | training_tools/overfit_diagnoser.py（gap 曲线+早停对照） | ✅ |
-| 20 | 微调效果评估体系 | training_tools/eval_harness.py | 🛠 C |
-| 21 | 多轮对话微调专项 | training_tools/multiturn_sft.py | 🛠 C |
+| 20 | 微调效果评估体系 | training_tools/eval_harness.py | ✅ |
+| 21 | 多轮对话微调专项 | training_tools/multiturn_sft.py | ✅ |
 | 22 | 模型蒸馏实战 | training_tools/distill_demo.py | 🛠 D |
 | 23 | 奖励模型训练 | training_tools/rm_train.py（排序 loss 最小实现） | 🛠 D |
 | 24 | RLHF/PPO 工程落地 | minimind_style/train_grpo.py（组相对基线）+ training_tools/ppo_mini.py（计划 D） | 🛠 D |

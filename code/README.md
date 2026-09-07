@@ -16,7 +16,7 @@
 | 06_world_model | 简易时序推演（三层：L1 状态转移 Demo / L2 训练引擎（多步推演评测）/ L3 退火噪声注入优化） | world_model_demo.py（L1）/ world_model_engine.py（L2）/ world_model_opt.py（L3） | torch |
 | minimind_style | MiniMind 式微型 LLM：P0–P3 全链路 + 变体 V/O/dLM/Linear（三层已标注：L1 数据/基础、L2 train_* 引擎、L3 *_model 模块；50 文件字段全合规） | pretrain.py / train_sft.py / train_lora.py / train_dpo.py / train_moe.py / train_grpo.py / tool_template_demo.py / train_v.py / train_o.py / train_dlm.py / train_linear.py | torch |
 | data_engineering | 主线 04-10 数据工程章节代码（管道/清洗/过滤/去重/脱敏/质量/领域） | pipeline_ingest.py / clean_rules.py / text_filter.py / dedup_minhash.py / pii_mask.py / quality_score.py / domain_build.py | Python 3.10 标准库 |
-| training_tools | 主线 11-21 训练工具章节代码（增量预训练/超参扫描/过拟合诊断；20/21 后续轮次补） | continue_pretrain.py / hyperparam_sweep.py / overfit_diagnoser.py | torch（复用 minimind_style） |
+| training_tools | 主线 11-21 训练工具章节代码（增量/超参/过拟合/评估/多轮） | continue_pretrain.py / hyperparam_sweep.py / overfit_diagnoser.py / eval_harness.py / multiturn_sft.py | torch（复用 minimind_style） |
 
 ## 环境依赖（最小公共集）
 
