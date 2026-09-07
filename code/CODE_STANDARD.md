@@ -65,7 +65,7 @@
 | 03_moe | 已有 | 本轮新增 moe_engine.py | 本轮新增 moe_opt.py | 本轮补齐 | 完成 |
 | 04_sparse_attention | 已有 | 本轮新增 window_attn_engine.py | 本轮新增 sparse_attn_bench.py | 本轮补齐 | 完成 |
 | 05_audio_vision_multimodal | 已有 | 缺 | 缺 | 待补字段 | 下一轮 |
-| 06_world_model | 已有 | 缺 | 缺 | 待补字段 | 下一轮 |
+| 06_world_model | 已有 | 本轮新增 world_model_engine.py | 本轮新增 world_model_opt.py | 本轮补齐 | 完成 |
 | minimind_style | 已有 | 部分已有 | 部分已有 | 待补字段 | 多轮推进 |
 
 ## 六、README 对照

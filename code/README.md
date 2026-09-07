@@ -13,7 +13,7 @@
 | 03_moe | 稀疏专家路由（三层：L1 路由 Demo / L2 分类训练引擎+可导负载均衡 / L3 系数与 Top-k 扫描） | moe_demo.py（L1）/ moe_engine.py（L2）/ moe_opt.py（L3） | torch |
 | 04_sparse_attention | FlashAttention 调用 + 窗口注意力（三层：L1 两个 Demo / L2 窗口因果 LM 引擎 / L3 复杂度基准） | flash_attn_demo.py、window_attention.py（L1）/ window_attn_engine.py（L2）/ sparse_attn_bench.py（L3） | torch（flash-attn 可选） |
 | 05_audio_vision_multimodal | 音频特征 / 视觉推理 / 多模态融合 | audio_feature_demo.py / vision_inference_demo.py / multimodal_fusion_demo.py | torch / torchaudio / torchvision（可降级） |
-| 06_world_model | 简易时序推演（世界模型最小版） | world_model_demo.py | torch |
+| 06_world_model | 简易时序推演（三层：L1 状态转移 Demo / L2 训练引擎（多步推演评测）/ L3 退火噪声注入优化） | world_model_demo.py（L1）/ world_model_engine.py（L2）/ world_model_opt.py（L3） | torch |
 | minimind_style | MiniMind 式微型 LLM：P0–P3 全链路 + 变体 V/O/dLM/Linear | pretrain.py / train_sft.py / train_lora.py / train_dpo.py / train_moe.py / train_grpo.py / tool_template_demo.py / train_v.py / train_o.py / train_dlm.py / train_linear.py | torch |
 
 ## 环境依赖（最小公共集）
