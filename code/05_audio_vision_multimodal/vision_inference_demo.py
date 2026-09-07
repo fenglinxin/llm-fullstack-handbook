@@ -2,9 +2,12 @@
 """
 视觉模型落地 Demo：torchvision 预训练推理 + 无依赖时的 patch 特征回退
 
+【层级】L1（极简 Demo：新手跑通；有 torchvision 走真实推理，没有则自动回退）
+
 【环境依赖】
-- Python 3.10+, PyTorch 2.x
-- 可选 torchvision（有预训练权重时走真实推理；否则走合成图像教学路径）
+- Python 3.10+；PyTorch 2.x（建议 >=2.1）
+- 安装：pip install torch==2.2.2（GPU 版按官网 CUDA 版本装）
+- 可选 torchvision：pip install torchvision==0.17.2（与 torch 2.2 配套；无则自动走回退路径）
 
 【核心逻辑】
 - 有 torchvision：加载 ResNet/ViT 对图像分类，展示特征提取与推理；
@@ -19,9 +22,23 @@
 2. 第一次运行会下载权重，离线环境请提前准备；
 3. 教学回退路径不产生真实语义，只验证结构能跑。
 
+【运行结果示例】（真实运行，CPU 无 torchvision）
+$ python vision_inference_demo.py
+torchvision 不可用，走教学回退： No module named torchvision
+fallback patch tokens: (1, 196, 64) logits: (1, 10)
+（回退路径打印 196 个 patch token 且 logits 形状正确 = 结构可跑通；
+安装 torchvision 后会自动走 ResNet 真实推理路径）
+
 【输出解读】
 - 打印 top1 类别 id 与 logits 形状；
 - 回退路径打印 patch 数 = (224/16)^2 = 196。
+
+【高频报错 Top5】
+1. “No module named torchvision”：未安装；修复：pip install torchvision==0.17.2 或接受回退路径；
+2. 权重下载失败：网络受限；修复：提前下载并离线放置，或换回退路径；
+3. normalize 参数错导致输出分布异常：需按官方 mean/std；修复：用官方 transforms.Normalize 参数；
+4. 输入尺寸非 224：ResNet 报 shape 错；修复：Resize(256)+CenterCrop(224)（本 Demo 已用）；
+5. PIL 不支持该图片格式：修复：Image.open 前先 convert RGB 或换格式。
 
 【工程改造方向】
 - 换成 Swin/自研 backbone（主线第 00 章对比）；

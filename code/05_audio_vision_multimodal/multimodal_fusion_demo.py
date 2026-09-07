@@ -2,8 +2,11 @@
 """
 多模态融合最小落地 Demo：文本 + 图像 + 音频 -> 简单融合分类
 
+【层级】L1（极简 Demo：新手跑通，CPU 秒级出结果）
+
 【环境依赖】
-- Python 3.10+, PyTorch 2.x；CPU 可运行
+- Python 3.10+；PyTorch 2.x（建议 >=2.1）；仅 torch
+- 安装：pip install torch==2.2.2（GPU 版按官网 CUDA 版本装；本 Demo CPU 可跑）
 
 【核心逻辑】
 - 三种模态分别抽特征（本 Demo 用随机/简单编码器代表）：
@@ -21,9 +24,24 @@
 2. 不同模态特征尺度差异大，先各自归一化再融合；
 3. 早期融合/晚期融合要按任务实测，不是越早越好。
 
+【运行结果示例】（真实运行，CPU，随机标签任务）
+$ python multimodal_fusion_demo.py
+step 0 loss 1.0699
+step 20 loss 1.0985
+step 40 loss 1.0876
+（loss 稳定在 ~1.1（3 类随机任务下限 ln3≈1.099）且不 NaN = 结构端到端可训；
+要看到 loss 真正下降需换有规律的真实数据）
+
 【输出解读】
-- loss 下降说明端到端可训；
-- 打印融合特征维度 = 各模态维度之和。
+- loss 不 NaN 且端到端能反传 = 融合结构正确；
+- 随机标签任务 loss 不会低于 ln(n_class)，属预期。
+
+【高频报错 Top5】
+1. 各模态 batch 维度不一致：text/img/frames 第一维必须相同；修复：统一 batch；
+2. 特征尺度差太大导致 loss 震荡：先各自 LayerNorm；修复：concat 前对每个特征 norm；
+3. 图像 conv 与输入尺寸不匹配：32x32 输入 conv stride2 后需池化（本 Demo 已用 AdaptiveAvgPool）；
+4. 音频帧数与特征维度对不上：frames 需 [batch, 帧数, feat]；修复：检查 proj 的输入维度；
+5. loss 一直不降但怀疑结构：先换成有规律的合成数据验证再上真实数据。
 
 【工程改造方向】
 - 把随机编码器换成真实 CLIP/Whisper 特征；
