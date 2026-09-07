@@ -2,10 +2,13 @@
 """
 FlashAttention 落地 Demo：调用 flash-attn 库 + 自动回退到 PyTorch SDPA
 
+【层级】L1（极简 Demo：新手跑通，CPU 可跑自动降级路径）
+
 【环境依赖】
-- Python 3.10+, PyTorch 2.x
-- 可选：flash-attn（Linux + CUDA；安装以官方文档为准）
-- 无 flash-attn 时自动使用 torch.nn.functional.scaled_dot_product_attention
+- Python 3.10+；PyTorch 2.x（建议 >=2.1，SDPA 需要 2.0+）
+- 安装：pip install torch==2.2.2（GPU 版按官网 CUDA 版本装）
+- 可选：flash-attn（仅 Linux + CUDA；pip install flash-attn，版本约束以官方文档为准）
+- 无 flash-attn 时自动降级到 F.scaled_dot_product_attention（本机即此路径）
 
 【核心逻辑】
 - FlashAttention 是 IO 感知的精确注意力：分块计算 + 在线 softmax；
@@ -21,9 +24,23 @@ FlashAttention 落地 Demo：调用 flash-attn 库 + 自动回退到 PyTorch SDP
 2. 序列长度与 head_dim 需满足 kernel 约束，版本不同要求不同；
 3. 降级路径输出应与 flash 数值接近（误差很小）。
 
+【运行结果示例】（真实运行，CPU 无 flash-attn）
+$ python flash_attn_demo.py
+backend: torch_sdpa (fallback, reason=No module named flash_attn)
+output: (2, 64, 4, 16) 耗时 60.8 ms
+（backend 打印降级原因但 output 形状正确 = 自动降级成功；Linux+CUDA 装 flash-attn 后会打印 flash_attn）
+
 【输出解读】
 - 输出形状 [batch, seq, n_heads, head_dim]；
-- 打印使用的后端与耗时。
+- 打印使用的后端与耗时；
+- 降级路径的数值与 flash 几乎一致（误差来自实现细节，可自行断言）。
+
+【高频报错 Top5】
+1. “No module named flash_attn”：未安装；修复：Linux+CUDA 装 flash-attn，或接受自动降级；
+2. “Expected q,k,v to be on CUDA”：flash kernel 不支持 CPU；修复：数据 .cuda() 或走 SDPA 降级；
+3. dtype 不支持：flash 需 fp16/bf16；修复：q/k/v 转 .half()/.bfloat16()；
+4. 形状约束报错：head_dim/seq 不满足 kernel 要求；修复：查该版本 flash-attn 约束，调 head_dim 为 8 的倍数；
+5. 装了 flash 仍报错：与 torch 版本不匹配；修复：按官方文档对齐 torch/cuda/flash 版本。
 
 【工程改造方向】
 - 在主线 36 章融合注意力中替换自研 attention；
