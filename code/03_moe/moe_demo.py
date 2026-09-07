@@ -2,14 +2,18 @@
 """
 MoE 混合专家 落地 Demo：稀疏专家路由最小实现 + 单轮推理
 
+【层级】L1（极简 Demo：新手跑通，CPU 秒级出结果）
+
 【环境依赖】
-- Python 3.10+, PyTorch 2.x；CPU 可运行
+- Python 3.10+；PyTorch 2.x（建议 >=2.1）；仅 torch
+- 安装：pip install torch==2.2.2（GPU 版按官网 CUDA 版本装；本 Demo CPU 可跑）
 
 【核心逻辑】
 1. 门控 Router：把每个 token 映射成 n_experts 个分数；
 2. Top-k 路由：每个 token 只激活分数最高的 k 个专家；
 3. 负载均衡损失：鼓励 token 均匀分布到各专家（防止专家饿死）；
-4. 输出 = 被选中专家输出的加权和。
+4. 输出 = 被选中专家输出的加权和；
+5. 逐行注释见 SparseMoE.forward（token 展平/取 top-k/按专家聚合/均衡 loss）。
 
 【关键参数】
 - n_experts=4：专家数量；
@@ -21,10 +25,24 @@ MoE 混合专家 落地 Demo：稀疏专家路由最小实现 + 单轮推理
 2. 负载均衡损失系数不能太大，否则路由失去选择性；
 3. 只看参数量会高估 MoE 算力成本，要看激活参数量。
 
+【运行结果示例】（真实运行，CPU）
+$ python moe_demo.py
+MoE output: (2, 6, 16)
+balance_loss: 0.0026（越小越均匀）
+total params ~4356, 单 token 激活参数约 2212
+（输出形状正确 + 激活参数 < 总参数 = MoE 稀疏性成立）
+
 【输出解读】
 - 输出形状 [batch, seq, d_model]；
-- 打印每个专家的“被选次数”，均匀说明负载均衡有效；
-- 总参数量远大于“每次激活参数量”。
+- balance_loss 接近 0 说明该随机输入下路由接近均匀；
+- 总参数量远大于“单 token 激活参数量”= 稀疏激活生效。
+
+【高频报错 Top5】
+1. “indices should be either on cpu”等 device 错：router/expert 需同 device；修复：模型 .to(device) 后输入同步；
+2. top_k > n_experts 报错：修复：top_k <= n_experts；
+3. 输出 NaN：router 分数 softmax 前过大或专家权重爆炸；修复：初始化小一点或加 LayerNorm；
+4. mask 聚合写错导致部分 token 输出为 0：修复：检查 top_idx==e_idx 的广播 shape；
+5. balance_loss 用 count.mean() 未除 batch：本 Demo 用 .float().mean() 已归一化，别重复除。
 
 【工程改造方向】
 - 把 Expert 换成 Transformer FFN 或任意子网络；

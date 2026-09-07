@@ -62,7 +62,7 @@
 | 00_rnn_lstm_gru | 已有 | 本轮新增 ts_forecast_engine.py | 本轮新增 rnn_opt.py | 本轮补齐 | 完成 |
 | 01_transformer | 已有 | seq2seq_engine.py | attention_opt.py | 已补齐 | 完成（参考实现） |
 | 02_mamba | 已有 | 本轮新增 ssm_engine.py | 本轮新增 ssm_opt.py | 本轮补齐 | 完成 |
-| 03_moe | 已有 | 缺 | 缺 | 待补字段 | 下一轮 |
+| 03_moe | 已有 | 本轮新增 moe_engine.py | 本轮新增 moe_opt.py | 本轮补齐 | 完成 |
 | 04_sparse_attention | 已有 | 缺 | 缺 | 待补字段 | 下一轮 |
 | 05_audio_vision_multimodal | 已有 | 缺 | 缺 | 待补字段 | 下一轮 |
 | 06_world_model | 已有 | 缺 | 缺 | 待补字段 | 下一轮 |
