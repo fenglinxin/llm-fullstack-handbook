@@ -28,11 +28,11 @@
 | 19 | 过拟合/欠拟合/灾难遗忘 | training_tools/overfit_diagnoser.py（gap 曲线+早停对照） | ✅ |
 | 20 | 微调效果评估体系 | training_tools/eval_harness.py | ✅ |
 | 21 | 多轮对话微调专项 | training_tools/multiturn_sft.py | ✅ |
-| 22 | 模型蒸馏实战 | training_tools/distill_demo.py | 🛠 D |
-| 23 | 奖励模型训练 | training_tools/rm_train.py（排序 loss 最小实现） | 🛠 D |
-| 24 | RLHF/PPO 工程落地 | minimind_style/train_grpo.py（组相对基线）+ training_tools/ppo_mini.py（计划 D） | 🛠 D |
-| 25 | RLAIF AI 反馈自动对齐 | training_tools/rlaif_synth.py | 🛠 D |
-| 26 | 小样本/领域自适应微调 | training_tools/domain_adapt.py | 🛠 D |
+| 22 | 模型蒸馏实战 | training_tools/distill_demo.py | ✅ |
+| 23 | 奖励模型训练 | training_tools/rm_train.py（Bradley-Terry 排序） | ✅ |
+| 24 | RLHF/PPO 工程落地 | minimind_style/train_grpo.py + training_tools/ppo_mini.py（Actor-Critic） | ✅ |
+| 25 | RLAIF AI 反馈自动对齐 | training_tools/rlaif_synth.py（裁判合成偏好） | ✅ |
+| 26 | 小样本/领域自适应微调 | training_tools/domain_adapt.py | ✅ |
 | 27 | 部署框架横向对比 | deployment/framework_matrix.py（dry-run 检测+对比表） | 🛠 E |
 | 28 | vLLM 部署实战与参数调优 | deployment/vllm_launch.py（dry-run/参数校验） | 🛠 E |
 | 29 | SGLang 高性能推理落地 | deployment/sglang_launch.py | 🛠 E |
