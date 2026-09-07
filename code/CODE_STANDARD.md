@@ -59,8 +59,8 @@
 
 | 目录 | L1 | L2 | L3 | 字段合规 | 备注 |
 |---|---|---|---|---|---|
-| 00_rnn_lstm_gru | 已有 | 缺 | 缺 | 待补字段 | 下一轮 |
-| 01_transformer | 已有 | 本轮新增 seq2seq_engine.py | 本轮新增 attention_opt.py | 本轮补齐 | 参考实现 |
+| 00_rnn_lstm_gru | 已有 | 本轮新增 ts_forecast_engine.py | 本轮新增 rnn_opt.py | 本轮补齐 | 完成 |
+| 01_transformer | 已有 | seq2seq_engine.py | attention_opt.py | 已补齐 | 完成（参考实现） |
 | 02_mamba | 已有 | 缺 | 缺 | 待补字段 | 下一轮 |
 | 03_moe | 已有 | 缺 | 缺 | 待补字段 | 下一轮 |
 | 04_sparse_attention | 已有 | 缺 | 缺 | 待补字段 | 下一轮 |

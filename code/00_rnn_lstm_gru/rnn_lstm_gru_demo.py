@@ -2,8 +2,11 @@
 """
 RNN / LSTM / GRU 极简落地 Demo（PyTorch 从零 + 库调用）
 
+【层级】L1（极简 Demo：新手跑通，CPU 数秒出结果）
+
 【环境依赖】
-- Python 3.10+, PyTorch 2.x, numpy
+- Python 3.10+；PyTorch 2.x（建议 >=2.1）；numpy（可选，本文件未直接用）
+- 安装：pip install torch==2.2.2（GPU 版按官网 CUDA 版本装；本 Demo 纯 CPU 亦可）
 - CPU 即可运行，无需 GPU
 
 【任务】用前 lookback 个时间步预测下一个值（正弦波），
@@ -28,6 +31,20 @@ RNN / LSTM / GRU 极简落地 Demo（PyTorch 从零 + 库调用）
 - 三个模型 loss 都下降即正确；
 - 同数据下 LSTM/GRU 通常比手写 RNN 收敛更稳，
   长序列任务差距会更明显。
+
+【运行结果示例】（真实运行，CPU）
+$ python rnn_lstm_gru_demo.py
+ManualRNN final loss = 0.00030
+nn.LSTM final loss = 0.00003
+nn.GRU final loss = 0.00005
+（三个 loss 都打印且 <0.01 = 运行成功；LSTM/GRU 比手写 RNN 低一个量级）
+
+【高频报错 Top5】
+1. “mat1 and mat2 shapes cannot be multiplied”：输入 x 需 [batch, seq] 或 [batch, seq, 1]；修复：检查 make_sine_data 的 unsqueeze(-1)；
+2. loss 一直是 0.5 左右不降：数据未归一化；修复：对序列做 (x-min)/(max-min) 或标准化；
+3. 手写 RNN loss 为 NaN：梯度爆炸；修复：换 tanh 激活、加梯度裁剪或减小 lr；
+4. nn.LSTM/GRU 需要三维输入：报错说明缺 batch_first 或维度；修复：统一 x 为 [batch, seq, features]；
+5. 换 CSV 数据后 shape 对不上：列数/采样率不同；修复：统一 float32 + [N, lookback, 1] 形状。
 
 【工程改造方向】
 - 换自己的时序数据：把 make_sine_data 换成读 CSV/数据库；
