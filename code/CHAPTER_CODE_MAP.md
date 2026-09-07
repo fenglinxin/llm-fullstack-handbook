@@ -33,12 +33,12 @@
 | 24 | RLHF/PPO 工程落地 | minimind_style/train_grpo.py + training_tools/ppo_mini.py（Actor-Critic） | ✅ |
 | 25 | RLAIF AI 反馈自动对齐 | training_tools/rlaif_synth.py（裁判合成偏好） | ✅ |
 | 26 | 小样本/领域自适应微调 | training_tools/domain_adapt.py | ✅ |
-| 27 | 部署框架横向对比 | deployment/framework_matrix.py（dry-run 检测+对比表） | 🛠 E |
-| 28 | vLLM 部署实战与参数调优 | deployment/vllm_launch.py（dry-run/参数校验） | 🛠 E |
-| 29 | SGLang 高性能推理落地 | deployment/sglang_launch.py | 🛠 E |
-| 30 | TensorRT-LLM 固化与加速 | deployment/trtllm_build.py（dry-run 流程） | 🛠 E |
-| 31 | 模型量化实操 | deployment/quantize_demo.py（PyTorch INT8/FP16 CPU 可跑） | 🛠 E |
-| 32 | 模型剪枝与蒸馏压缩 | deployment/prune_demo.py（幅度剪枝 CPU 可跑） | 🛠 E |
+| 27 | 部署框架横向对比 | deployment/framework_matrix.py（环境检测矩阵） | ✅ |
+| 28 | vLLM 部署实战与参数调优 | deployment/vllm_launch.py（参数校验+dry-run/--run） | ✅ |
+| 29 | SGLang 高性能推理落地 | deployment/sglang_launch.py | ✅ |
+| 30 | TensorRT-LLM 固化与加速 | deployment/trtllm_build.py（三步构建流程） | ✅ |
+| 31 | 模型量化实操 | deployment/quantize_demo.py（per-row INT8 动态量化） | ✅ |
+| 32 | 模型剪枝与蒸馏压缩 | deployment/prune_demo.py（幅度剪枝+恢复微调） | ✅ |
 | 33 | KV Cache 优化与上下文拓展 | 01_transformer/attention_opt.py（KV Cache 正确性+加速基准） | ✅ |
 | 34 | 流式推理封装与高并发服务化 | deployment/stream_server_demo.py + concurrent_load.py | 🛠 F |
 | 35 | 推理编译器核心原理 | deployment/compiler_ir_demo.py（极简 IR+拓扑+代码生成） | 🛠 F |
