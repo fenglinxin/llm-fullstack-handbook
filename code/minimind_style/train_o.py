@@ -188,3 +188,21 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+"""
+规范字段补充（全局强制代码落地规范）
+
+【层级】L2（工程训练：MiniMind-O 双任务（音调/看图）训练与评测）
+【核心逻辑】audio 与 vision 样本分开 forward 共享 decoder 一起反传；
+评测按噪声实例划分（seed 3-4），分别报 audio_acc/vision_acc。
+【运行结果示例】（真实运行，CPU，60 epochs，55 行数据）
+step 359 loss_a 0.030 loss_v 0.011 | audio_acc 1.000 vision_acc 0.875
+saved -> .../out/o.pt
+（随机基线：音频 33%、视觉 12.5%；两者显著高于随机即 Omni 解码器同时吃到两种模态）
+【高频报错 Top5】
+1. 先跑 data/make_omni_data.py；2. 精度不升先确认两个 jsonl 数据最新；
+3. 音频特征 NaN：波形未归一化；修复：波形 /max(abs) 或加小 eps；
+4. 评测用贪心（temp=0.01），采样对比要固定 seed；
+5. 想加联合样本：数据行加 modality 字段并扩展 collate。
+【工程改造方向】真实音频/图像；统一序列训练；模态 loss 自动加权。
+"""

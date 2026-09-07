@@ -60,13 +60,13 @@
 | 目录 | L1 | L2 | L3 | 字段合规 | 备注 |
 |---|---|---|---|---|---|
 | 00_rnn_lstm_gru | 已有 | 本轮新增 ts_forecast_engine.py | 本轮新增 rnn_opt.py | 本轮补齐 | 完成 |
-| 01_transformer | 已有 | seq2seq_engine.py | attention_opt.py | 已补齐 | 完成（参考实现） |
-| 02_mamba | 已有 | 本轮新增 ssm_engine.py | 本轮新增 ssm_opt.py | 本轮补齐 | 完成 |
-| 03_moe | 已有 | 本轮新增 moe_engine.py | 本轮新增 moe_opt.py | 本轮补齐 | 完成 |
-| 04_sparse_attention | 已有 | 本轮新增 window_attn_engine.py | 本轮新增 sparse_attn_bench.py | 本轮补齐 | 完成 |
-| 05_audio_vision_multimodal | 已有 | 本轮新增 multimodal_pipeline.py | 本轮新增 multimodal_opt.py | 本轮补齐 | 完成 |
-| 06_world_model | 已有 | 本轮新增 world_model_engine.py | 本轮新增 world_model_opt.py | 本轮补齐 | 完成 |
-| minimind_style | 已有 | 部分已有 | 部分已有 | 待补字段 | 多轮推进 |
+| 01_transformer | 已有 | seq2seq_engine.py | attention_opt.py | 已补齐 | 完成 |
+| 02_mamba | 已有 | ssm_engine.py | ssm_opt.py | 已补齐 | 完成 |
+| 03_moe | 已有 | moe_engine.py | moe_opt.py | 已补齐 | 完成 |
+| 04_sparse_attention | 已有 | window_attn_engine.py | sparse_attn_bench.py | 已补齐 | 完成 |
+| 05_audio_vision_multimodal | 已有 | multimodal_pipeline.py | multimodal_opt.py | 已补齐 | 完成 |
+| 06_world_model | 已有 | world_model_engine.py | world_model_opt.py | 已补齐 | 完成 |
+| minimind_style | 数据/基础脚本=已有 | train_* 训练引擎=已标注 | *_model/优化模块=已标注 | 已补齐（50/50 全部文件） | 完成 |
 
 ## 六、README 对照
 

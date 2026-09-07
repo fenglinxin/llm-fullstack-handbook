@@ -119,3 +119,24 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+"""
+规范字段补充（全局强制代码落地规范）
+
+【层级】L2（工程训练：MoE 与 Dense 同配置对照预训练）
+【核心逻辑】同 pretrain.py 的 next-token 循环，但模型换成 build_moe_model；
+total loss = CE + aux_weight * sum(block.ffn.aux_loss)。
+【关键参数】（补充）--aux_weight 0.01（默认；0=关闭均衡，0.1 更强约束）
+【运行结果示例】（真实运行，CPU，400 步，dim64/layers2/4 专家）
+step 399 ce 0.0179 aux 4.0034 | 人工智能。门上。门。投。优。奖无率卡。把奖办。为学。办。
+saved -> .../out/moe.pt
+（CE 收敛说明 MoE 学得动；aux 约 2.0/块=路由健康；生成质量差于 Dense 是
+小模型+小语料下 MoE 的真实表现，教学重点在机制对照）
+【高频报错 Top5】
+1. aux 没进梯度：确认 sum(block.ffn.aux_loss) 在 loss 内（已实现）；
+2. 生成崩坏：路由噪声+小语料过拟合；修复：换大语料或加 aux 权重；
+3. 参数量翻倍显存涨：MoE 需驻留全部专家，属预期；
+4. 与 pretrain.py 公平对比：steps/seed/batch 必须一致；
+5. resume 未实现：需要时参考 L2 引擎模板。
+【工程改造方向】接入真实预训练框架时把 aux 换成官方 Switch 负载项；记录专家命中率。
+"""

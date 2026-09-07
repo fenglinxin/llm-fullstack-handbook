@@ -160,3 +160,23 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+"""
+规范字段补充（全局强制代码落地规范）
+
+【层级】L2（对齐训练：极简 GRPO——组内采样+规则奖励+组相对 advantage）
+【核心逻辑】对同一问题采样 group_size 个回答；奖励=与标准答案 LCP 占比；
+组内 (r-mean)/std 得 advantage；loss=-mean(adv*回答部分 logp)。
+【运行结果示例】（真实运行，CPU，80 steps/5 样本/温度 0.9）
+step  70 loss -11.4679 reward 0.880 adv 0.716 | 问：账号被锁怎么办？答：等待半小时后重试或联系管理员。
+rule reward: sft=0.850 -> grpo=0.869
+saved -> .../out/grpo.pt
+（多数步因全组 reward=1.0 被跳过=过拟合背题无学习信号，属教学预期）
+【高频报错 Top5】
+1. 全组 reward 相同 adv=0：模型已背题；修复：提高温度/换更难的评测题；
+2. loss 为负且很大：logp 求和口径；正常，看趋势即可；
+3. generate 后忘切回 train：dropout 层会静默出错（本文件已 policy.train()）；
+4. 奖励函数用错字符集：LCP 计算前确认在“答：”之后切分；
+5. 想与 DPO 对比公平性：起点/数据/评测必须一致。
+【工程改造方向】加 ratio clip + KL 惩罚（完整 PPO 风格 GRPO）；真实 RL 环境接入。
+"""

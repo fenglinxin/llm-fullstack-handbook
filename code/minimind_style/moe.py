@@ -99,3 +99,21 @@ def build_moe_model(cfg, n_experts=4, top_k=2):
 4. 对比同参数预算下 Dense vs MoE 的 loss 与生成质量；
 5. 思考：为什么推理部署要 EP（专家并行）而不是 TP（主线 00/33 章）。
 """
+
+"""
+规范字段补充（全局强制代码落地规范）
+
+【层级】L3（优化实现模块：MoE FFN 组件，供训练脚本复用）
+【核心逻辑】MoEFFN 分两条路径：router 打分取 top-k + 专家加权求和（主输出），
+负载均衡 aux_loss 用 f_i*p_i（f 用 detach 的硬命中占比）挂到 self.aux_loss 供训练循环读取。
+【运行结果示例】（真实运行，train_moe.py 400 步后）
+params dense=145600 moe=342720 (2.35x)；step 399 ce 0.0179 aux 4.0034
+（aux≈2.0/块说明路由均匀健康；小语料下 MoE 采样质量不如 Dense 属教学结论）
+【高频报错 Top5】
+1. Block 前向拿 tuple：MoEFFN 必须只返回主输出，aux 挂属性（本文件已按此实现）；
+2. aux 只在最后一个专家上算：f_i 需遍历全部专家累加（已修）；
+3. top_k>n_experts：报索引越界；修复：调用处校验；
+4. 路由长期集中在同一专家：aux 权重调大或加 router z-loss；
+5. 合并/替换后 state_dict 对不上：重训或 strict=False 自查。
+【工程改造方向】给 FFN 换真实大模型层时保持 MoEFFN 接口；EP 部署时导出路由统计。
+"""

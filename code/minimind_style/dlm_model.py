@@ -206,3 +206,21 @@ class DiffLM(nn.Module):
 4. 对比扩散 LM 与自回归 LM 在同语料上的困惑度与生成多样性；
 5. 思考扩散 LM 在“规划/回溯/编辑”上的潜在优势与工程代价。
 """
+
+"""
+规范字段补充（全局强制代码落地规范）
+
+【层级】L3（模型实现模块：双向 Transformer + MASK 扩散，corrupt/generate/infill）
+【核心逻辑】corrupt 用撒点+连续 span 涂黑（span 缺了学不会完形填空）；
+DiffLM 双向注意力还原被涂位置；generate/infill 按置信度逐位还原，
+infill 保留右侧上下文（扩散 LM 相对自回归的差异点）。
+【运行结果示例】（真实运行，train_dlm.py 3000 步后）
+训练窗口 span 还原率 98.7%；infill '问题'->'问题' OK、'精度'->'精度' OK
+【高频报错 Top5】
+1. 只撒点涂黑学不会连续挖空：必须混合 span（--span_prob）；已实现；
+2. 输出 MASK 符：生成时候选没排除已还原位置；修复：infill 记录 remaining；
+3. MASK id 与词表冲突：MASK=vocab_size 新 token（本实现已隔离）；
+4. 双向注意力写成了因果：扩散模型看不到右边会退化；
+5. 生成长度固定：扩散 LM 不能自由停，需按任务给 target_len。
+【工程改造方向】换长度调度训练；并行还原 k 位置；接 classifier-free guidance。
+"""

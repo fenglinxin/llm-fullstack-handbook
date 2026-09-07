@@ -120,3 +120,21 @@ class LinearGPT(nn.Module):
 4. 对比同参数量 softmax Transformer：小语料谁快谁准；
 5. 把注意力状态接到 MoE 或 SSM 上，思考线性注意力家族的统一视图。
 """
+
+"""
+规范字段补充（全局强制代码落地规范）
+
+【层级】L3（模型实现模块：线性注意力 + 可学习位置编码）
+【核心逻辑】LinearAttention 用 elu+1 核特征化后做因果累积：
+S=Σφ(k)⊗v、z=Σφ(k)，y=(φ(q)S)/(φ(q)z+eps)；无 attention matrix。
+【运行结果示例】（真实运行，train_linear.py 400 步同配置对照）
+linear 最终 loss 0.0230；eval CE softmax 0.0196 vs linear 0.0255（8 窗均值）
+params=149696（比 TinyGPT 多 4096 位置编码参数）
+【高频报错 Top5】
+1. 输出随序列长度发散：漏了除以累积键和 z（已实现）；
+2. RoPE 与线性注意力不兼容：本实现换可学习绝对位置编码；
+3. einsum 维度错：S 是 [b,h,s,d,d]，拼写核对公式；
+4. 数值不稳定：elu+1 后仍可能大数；修复：输入先 norm；
+5. 小语料打不过 softmax 是预期，别为调参浪费时间。
+【工程改造方向】做流式推理状态缓存；换 RetNet 式指数衰减；GPU 上对比长序列。
+"""

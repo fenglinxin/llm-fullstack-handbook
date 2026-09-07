@@ -173,3 +173,21 @@ class MiniMindV(nn.Module):
 4. 对比图像 token 放在 prompt 前/后、是否带位置编码的效果；
 5. 思考 MiniMind-V 真实做法：冻结 SigLIP + 训练 Projector 两阶段，为什么。
 """
+
+"""
+规范字段补充（全局强制代码落地规范）
+
+【层级】L3（模型实现模块：MiniMind-V 视觉编码器 + 渲染函数）
+【核心逻辑】VisionTower：patch 化->Linear 投影->可学习位置->RMSNorm；
+MiniMindV：图像 token 拼在文本前，同一 decoder 自回归；loss 只统计文本段。
+【运行结果示例】（真实运行，train_v.py 80 epochs）
+step 239 loss 0.0186 val_acc 1.000 | 答：图中有方块在左上角
+（val 按“未见过的图像实例”划分，8 类随机仅 12.5%，1.0 说明真在看图）
+【高频报错 Top5】
+1. 图像缺 batch 维（[1,12,12] vs [1,1,12,12]）：generate 已自动补，外部调用注意；
+2. 文本长度+36 超过 max_seq：训练截断留位（已实现）；
+3. loss 全 0：padding 标签没置 -100；修复：labels.masked_fill(labels==0,-100)；
+4. val_acc 为 0：测试图案没见过（旧划分）或图像 shape 错；
+5. 渲染与训练不同源：render_pattern 参数签名改了必须同步。
+【工程改造方向】换真实图片/冻结 SigLIP 两阶段训练；视觉塔加双向注意力。
+"""

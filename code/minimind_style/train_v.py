@@ -163,3 +163,21 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+"""
+规范字段补充（全局强制代码落地规范）
+
+【层级】L2（工程训练：MiniMind-V 看图问答训练+实例级评测）
+【核心逻辑】训练/测试按“图案相同、图像实例不同（noise_seed）”划分；
+评测用贪心生成与标注前缀匹配算 val_acc，防止纯背图/背答案。
+【运行结果示例】（真实运行，CPU，80 epochs，40 行数据）
+step 239 loss 0.0186 val_acc 1.000 | 答：图中有方块在左上角
+saved -> .../out/v.pt
+【高频报错 Top5】
+1. 先跑 data/make_vision_data.py，否则样本为 0；
+2. 换图案后 vocab 变了：tokenizer 重新 fit（train_v 自动做）；
+3. batch 内长度不一：collate 已 padding+ignore；改数据格式时保持 ids 结构；
+4. 评测只对测试实例（seed>=3）；想测训练实例用 probe；
+5. 图像噪声点可能落在图案上，多 seed 取平均更稳。
+【工程改造方向】真实图像数据集接入（改 make_vision_data + render 为加载器）。
+"""

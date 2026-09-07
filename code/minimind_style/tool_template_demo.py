@@ -144,3 +144,39 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+"""
+规范字段补充（全局强制代码落地规范）
+
+【层级】L1（模板演示：CoT/工具调用两轮闭环，无需训练即运行）
+【核心逻辑】demo_cot 构造带 <think> 的 SFT 样本；demo_tool 演示
+<tool_call>JSON 解析->工具执行-><tool_result>回填->最终回答 的完整两轮；
+demo_check 用真实词表实测模板字符覆盖率。
+【关键参数】（补充）--demo cot|tool|check|all（默认 all）：选择演示模式
+【运行结果示例】（真实运行）
+$ python tool_template_demo.py --demo check
+覆盖率 35% | UNK=13 | <think>先检查电源</think>
+覆盖率 26% | UNK=34 | <tool_call>{"name": "get_weather"}</tool_call>
+覆盖率 100% | UNK=0 | 问：打印机连不上怎么办？答：
+（tool 模式会打印完整的 [1]模型输出->[5]最终回答 闭环）
+【高频报错 Top5】
+1. 解析工具调用失败：JSON 用了中文引号/单引号；修复：只用标准 JSON；
+2. eval 危险：run_tool 的 calc 用了 eval；生产必须换白名单解析；
+3. tokenizer 没生成：demo_check 需要 out/vocab.json（先跑 pretrain）；
+4. 模板字符 UNK：字符级词表覆盖不了 <>{}，结论即教学点；
+5. 想微调模板：把 build_cot_sample 输出接入 sft jsonl 即可。
+【工程改造方向】加工具 schema 校验、错误回传 <tool_error>、白名单权限隔离。
+"""
+
+"""
+规范字段补充 2（补齐缺失字段标记）
+
+【避坑】
+- tool 模式里的 calc 用 eval 仅为演示，生产必须替换为白名单计算；
+- <think>/<tool_call> 等模板字符在字符级词表外是预期结果，不是 bug；
+- 需要 out/vocab.json 才能跑 check 模式，先执行 pretrain.py。
+【输出解读】
+- 每个 demo 打印完整流程且无异常退出 = 成功；
+- check 模式覆盖率：中文问答 100%，模板字符 26-35%——这个差距就是
+  “模板工程需要 BPE 分词”的证据。
+"""

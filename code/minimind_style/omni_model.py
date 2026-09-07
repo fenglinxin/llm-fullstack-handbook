@@ -173,3 +173,20 @@ class MiniMindO(nn.Module):
 4. 对比模态 token 数（1/2/4）与两类任务精度的关系；
 5. 思考真实 Omni 模型为何常用模态专用 tokenizer + 统一 projector。
 """
+
+"""
+规范字段补充（全局强制代码落地规范）
+
+【层级】L3（模型实现模块：MiniMind-O 音画双模态共享解码器）
+【核心逻辑】AudioTower 把 8 帧 RMS+3 路频率幅度特征压成 2 token；
+VisionTower 复用视觉 patch；两路径共享同一文本解码器（分 forward 便于 CPU 教学）。
+【运行结果示例】（真实运行，train_o.py 60 epochs）
+audio_acc 1.000 vision_acc 0.875；loss_a 0.030 loss_v 0.011
+【高频报错 Top5】
+1. 音频特征训练/推理必须同一函数（audio_features），否则频点错位；
+2. audio 与 vision 样本不能混 batch：token 数不同，分路径 forward（已实现）；
+3. 两条 loss 量级失衡：可加权重（本任务量级接近，未加）；
+4. 波形噪声 seed 与数据行不对应：row 里的 noise_seed 要原样传给 render；
+5. 换成真实音频后采样率不一致：所有环节统一 sr。
+【工程改造方向】统一 token 序列+模态标记训练；接真实 encoder；联合问答任务。
+"""
