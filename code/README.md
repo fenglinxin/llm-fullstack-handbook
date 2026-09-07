@@ -17,7 +17,7 @@
 | minimind_style | MiniMind 式微型 LLM：P0–P3 全链路 + 变体 V/O/dLM/Linear（三层已标注：L1 数据/基础、L2 train_* 引擎、L3 *_model 模块；50 文件字段全合规） | pretrain.py / train_sft.py / train_lora.py / train_dpo.py / train_moe.py / train_grpo.py / tool_template_demo.py / train_v.py / train_o.py / train_dlm.py / train_linear.py | torch |
 | data_engineering | 主线 04-10 数据工程章节代码（管道/清洗/过滤/去重/脱敏/质量/领域） | pipeline_ingest.py / clean_rules.py / text_filter.py / dedup_minhash.py / pii_mask.py / quality_score.py / domain_build.py | Python 3.10 标准库 |
 | training_tools | 主线 11-26 训练与对齐工具（增量/超参/过拟合/评估/多轮/蒸馏/RM/PPO/RLAIF/领域自适应） | continue_pretrain.py / hyperparam_sweep.py / overfit_diagnoser.py / eval_harness.py / multiturn_sft.py / distill_demo.py / rm_train.py / ppo_mini.py / rlaif_synth.py / domain_adapt.py | torch（复用 minimind_style） |
-| deployment | 主线 27-32 部署与压缩（框架矩阵/vLLM/SGLang/TRT-LLM/量化/剪枝） | framework_matrix.py / vllm_launch.py / sglang_launch.py / trtllm_build.py / quantize_demo.py / prune_demo.py | 框架类需 Linux+CUDA（dry-run 本机可跑）；量化/剪枝 CPU 可跑 |
+| deployment | 主线 27-40 部署/压缩/推理优化（框架/量化/剪枝/流式/编译器/投机/批调度） | framework_matrix.py / vllm_launch.py / sglang_launch.py / trtllm_build.py / quantize_demo.py / prune_demo.py / stream_server_demo.py / compiler_ir_demo.py / fusion_bench.py / dynshape_demo.py / speculative_demo.py / continuous_batching_demo.py | 框架类需 Linux+CUDA（dry-run 本机可跑）；其余 CPU 可跑 |
 
 ## 环境依赖（最小公共集）
 

@@ -40,13 +40,13 @@
 | 31 | 模型量化实操 | deployment/quantize_demo.py（per-row INT8 动态量化） | ✅ |
 | 32 | 模型剪枝与蒸馏压缩 | deployment/prune_demo.py（幅度剪枝+恢复微调） | ✅ |
 | 33 | KV Cache 优化与上下文拓展 | 01_transformer/attention_opt.py（KV Cache 正确性+加速基准） | ✅ |
-| 34 | 流式推理封装与高并发服务化 | deployment/stream_server_demo.py + concurrent_load.py | 🛠 F |
-| 35 | 推理编译器核心原理 | deployment/compiler_ir_demo.py（极简 IR+拓扑+代码生成） | 🛠 F |
-| 36 | 算子融合与计算图编译实战 | deployment/fusion_bench.py（手动 vs 融合 kernel 计时） | 🛠 F |
-| 37 | 动态 shape 与显存编译器优化 | deployment/dynshape_demo.py | 🛠 F |
-| 38 | Speculative Decoding 投机推理进阶 | deployment/speculative_demo.py（草稿+验证 CPU 可跑） | 🛠 F |
-| 39 | 批量调度与并行深度适配 | deployment/continuous_batching_demo.py | 🛠 F |
-| 40 | 内核重构与编译级量化 | 复用 deployment/quantize_demo.py + fusion_bench.py + compiler_ir_demo.py | 🛠 F |
+| 34 | 流式推理封装与高并发服务化 | deployment/stream_server_demo.py（async 流式+并发对比） | ✅ |
+| 35 | 推理编译器核心原理 | deployment/compiler_ir_demo.py（IR+拓扑+codegen） | ✅ |
+| 36 | 算子融合与计算图编译实战 | deployment/fusion_bench.py（融合基准） | ✅ |
+| 37 | 动态 shape 与显存编译器优化 | deployment/dynshape_demo.py | ✅ |
+| 38 | Speculative Decoding 投机推理进阶 | deployment/speculative_demo.py | ✅ |
+| 39 | 批量调度与并行深度适配 | deployment/continuous_batching_demo.py | ✅ |
+| 40 | 内核重构与编译级量化 | 复用 deployment/quantize_demo.py + fusion_bench.py + compiler_ir_demo.py | ✅ |
 | 41 | 全链路串联 | ops_pipeline/end_to_end.py（corpus→pretrain→sft→eval 一键编排） | 🛠 G |
 | 42 | 领域大模型定制化落地 | ops_pipeline/domain_launch.py | 🛠 G |
 | 43 | 高并发生产适配与端侧部署 | deployment/stream_server_demo.py + ops_pipeline/onnx_export_demo.py | 🛠 G |
