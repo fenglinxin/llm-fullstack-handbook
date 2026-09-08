@@ -19,9 +19,17 @@
 
 ```text
 llm-fullstack-handbook/
-├── README.md
+├── README.md            # 本文件：仓库总览
 ├── md/                  # 47 篇 Markdown 源稿（第 00 章 + 主线 46 章）
-├── code/                # 第 00 章配套：模型结构可运行代码（RNN/Transformer/Mamba/MoE/稀疏注意力/多模态/世界模型）
+├── code/                # 可运行工程代码（47 章全覆盖，见下方导航）
+│   ├── 00_* ~ 06_*      # 第 00 章模型结构代码（RNN/Transformer/Mamba/MoE/稀疏注意力/多模态/世界模型）
+│   ├── minimind_style/  # MiniMind 式微型 LLM 全链路（预训练/SFT/LoRA/DPO/MoE/GRPO/变体模型）
+│   ├── data_engineering/# 主线 04-10：数据管道/清洗/过滤/去重/脱敏/质量/领域构建
+│   ├── training_tools/  # 主线 11-26：增量续训/超参/过拟合/评估/多轮/蒸馏/RM/PPO/RLAIF/领域自适应
+│   ├── deployment/      # 主线 27-40：框架/量化/剪枝/流式/编译器/投机解码/批调度
+│   ├── ops_pipeline/    # 主线 41-45：端到端/ONNX/AB 对标/监控
+│   ├── CHAPTER_CODE_MAP.md   # 47 章 ↔ 代码映射表
+│   └── CODE_STANDARD.md      # 全局代码落地规范与验收清单
 ├── docs/                # GitHub Pages 站点（发布根目录）
 │   ├── index.html       # 首页：阶段章节总目录
 │   ├── chapters/        # ch00.html … ch46.html
@@ -31,9 +39,31 @@ llm-fullstack-handbook/
     └── build_site.py    # 由 md/ 重新生成 docs/ 的构建脚本
 ```
 
-## 模型结构落地代码
+## 代码仓库导航（47 章全覆盖）
 
-第 00 章《模型结构核心原理层》的配套可运行代码在 `code/` 目录，每类架构一个子目录，含环境依赖、逐行注释、避坑、输出解读与进阶 Prompt，详见 `code/README.md`。
+每个章节都有对应的可一键运行工程代码；全部文件遵守 `code/CODE_STANDARD.md`（9 个文档字段 + L1/L2/L3 三层标注），运行示例均为真实输出。
+
+| 目录 | 覆盖章节 | 内容 | 入口 |
+|---|---|---|---|
+| `00_* ~ 06_*` | 第 00 章 | 模型结构原理可运行代码（每个架构目录三层） | `code/README.md` |
+| `minimind_style` | 01-03 主线 + 模型变体 | 从 0 训练微型 LLM 全流程 | `code/minimind_style/README.md` |
+| `data_engineering` | 04-10 | 数据管道/清洗/过滤/去重/脱敏/质量/领域构建 | 各文件头部说明 |
+| `training_tools` | 11-26 | 训练与对齐工具链 | 各文件头部说明 |
+| `deployment` | 27-40 | 部署/压缩/推理优化（含 dry-run 启动器） | 各文件头部说明 |
+| `ops_pipeline` | 41-45 | 端到端/领域启动/ONNX/AB/监控 | 各文件头部说明 |
+
+- 47 章 ↔ 代码对照总表：`code/CHAPTER_CODE_MAP.md`
+- 全局代码规范与合规检查器：`code/CODE_STANDARD.md` + `code/scripts/check_code_standard.py`
+
+### 三分钟跑通最小闭环（CPU）
+
+```bash
+cd code/minimind_style
+pip install torch==2.2.2
+python pretrain.py --steps 120      # 微型预训练
+python train_sft.py --epochs 10     # 微型 SFT
+python generate.py --prompt "人工智能"
+```
 
 ## 本地预览
 
@@ -54,6 +84,9 @@ python3 scripts/build_site.py
 1. 仓库 Settings → Pages → Build and deployment → Source 选择「Deploy from a branch」；
 2. Branch 选 `main`，目录选 `/docs`；
 3. 站点地址：https://fenglinxin.github.io/llm-fullstack-handbook/
+
+<details>
+<summary>📚 章节索引（47 篇，点击展开）</summary>
 
 ## 章节索引（47 篇）
 
@@ -118,6 +151,8 @@ python3 scripts/build_site.py
   - 【LLM全栈工程·第44章】模型迭代升级与性能对标评测：让模型持续变好且可证明
   - 【LLM全栈工程·第45章】线上问题闭环排查：监控、告警与应急手册
   - 【LLM全栈工程·第46章】工程化最佳实践汇总：LLM 工业级全栈落地手册（终章）
+
+</details>
 
 ## 说明
 
